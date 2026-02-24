@@ -1,4 +1,3 @@
-# qt_app.py
 from __future__ import annotations
 
 import json
@@ -686,8 +685,18 @@ class TaskHudWindow(QWidget):
                 date_sort = dued.toordinal() if dued else 999999999
                 return (0, group, diff_sort, date_sort, t.title.lower())
 
-            absdiff = abs(diff) if diff != 9999 else 999999
-            return (1, absdiff, t.title.lower())
+            # KESZ (Completed) feladatok új rendezése
+            if diff == 9999:
+                # Dátum nélküliek a végére
+                sort_val = 999999999
+            else:
+                # -diff trükk:
+                # Jövőbeli dátum (pl. +100 nap) -> -100 (kicsi szám, elöl lesz)
+                # Ma (0 nap) -> 0
+                # Múltbeli dátum (pl. -500 nap) -> +500 (nagy szám, hátul lesz)
+                sort_val = -diff
+            
+            return (1, sort_val, t.title.lower())
 
         tasks_sorted = sorted(tasks, key=sort_key)
 
