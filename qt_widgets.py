@@ -1,4 +1,3 @@
-# qt_widgets.py
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -252,11 +251,11 @@ class TaskCard(QFrame):
 
         if task.status == "FOLYAMATBAN":
             self.btn_left = MinimalButton("check", icon_size=30)
-            self.btn_left.setToolTip("Kész")
+            # self.btn_left.setToolTip("Kész")
             self.btn_left.clicked.connect(self._on_done)
         else:
             self.btn_left = MinimalButton("undo", icon_size=30)
-            self.btn_left.setToolTip("Visszaállítás")
+            # self.btn_left.setToolTip("Visszaállítás")
             self.btn_left.clicked.connect(self._on_reopen)
 
         due_text = task.due if task.due else "-"
