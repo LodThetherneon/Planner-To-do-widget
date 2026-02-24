@@ -714,26 +714,15 @@ class TaskHudWindow(QWidget):
 
         # Kész feladatok megjelenítése lapozva (max 12 oldalanként)
         if done_tasks:
-            self.scroll_layout.insertWidget(self.scroll_layout.count() - 1, SeparatorLine())
-
             max_pages = max(1, (len(done_tasks) + 11) // 12)
             if self._completed_page > max_pages:
                 self._completed_page = max_pages
             elif self._completed_page < 1:
                 self._completed_page = 1
 
-            start_idx = (self._completed_page - 1) * 12
-            end_idx = start_idx + 12
-            page_tasks = done_tasks[start_idx:end_idx]
+            self.scroll_layout.insertWidget(self.scroll_layout.count() - 1, SeparatorLine())
 
-            for t in page_tasks:
-                card = TaskCard(t)
-                card.done_clicked.connect(self._on_done)
-                card.reopen_clicked.connect(self._on_reopen)
-                card.delete_clicked.connect(self._on_delete)
-                self.scroll_layout.insertWidget(self.scroll_layout.count() - 1, card)
-
-            # Lapozó vezérlő (csak ha több mint 1 oldalnyi kész feladat van)
+            # Lapozó vezérlő ÁTHELYEZVE IDE (ha több mint 1 oldalnyi kész feladat van)
             if max_pages > 1:
                 pag_widget = QWidget()
                 pag_widget.setStyleSheet("background: transparent; border: 0px;")
@@ -742,8 +731,6 @@ class TaskHudWindow(QWidget):
                 pag_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
                 btn_prev = MinimalButton("left", icon_size=28)
-                # Tooltip kiszedve: ne jelenjen meg üres buborék
-                # btn_prev.setToolTip("Előző oldal")
                 btn_prev.clicked.connect(self._prev_page)
                 if self._completed_page == 1:
                     btn_prev.setDisabled(True)
@@ -753,8 +740,6 @@ class TaskHudWindow(QWidget):
                 lbl_page.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
                 btn_next = MinimalButton("right", icon_size=28)
-                # Tooltip kiszedve: ne jelenjen meg üres buborék
-                # btn_next.setToolTip("Következő oldal")
                 btn_next.clicked.connect(self._next_page)
                 if self._completed_page == max_pages:
                     btn_next.setDisabled(True)
@@ -766,6 +751,17 @@ class TaskHudWindow(QWidget):
                 pag_layout.addWidget(btn_next)
 
                 self.scroll_layout.insertWidget(self.scroll_layout.count() - 1, pag_widget)
+
+            start_idx = (self._completed_page - 1) * 12
+            end_idx = start_idx + 12
+            page_tasks = done_tasks[start_idx:end_idx]
+
+            for t in page_tasks:
+                card = TaskCard(t)
+                card.done_clicked.connect(self._on_done)
+                card.reopen_clicked.connect(self._on_reopen)
+                card.delete_clicked.connect(self._on_delete)
+                self.scroll_layout.insertWidget(self.scroll_layout.count() - 1, card)
 
     def _on_done(self, task_id: str, title: str) -> None:
         if not self._startup_banner_active:
