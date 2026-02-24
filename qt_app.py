@@ -142,6 +142,10 @@ class TaskHudWindow(QWidget):
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        
+        # MÓDOSÍTÁS ITT: scrollbar policy megváltoztatása
+        self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        
         self.scroll.setFrameShape(QFrame.Shape.NoFrame)
 
         self.scroll.setAutoFillBackground(False)
