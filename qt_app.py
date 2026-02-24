@@ -121,7 +121,7 @@ class TaskHudWindow(QWidget):
         lr.setSpacing(10)
         self.btn_login = QPushButton("Bejelentkezés")
         self.btn_login.clicked.connect(self.start_login_mainthread)
-        self.lbl_hint = QLabel("Üdvözöllek, v1.03")
+        self.lbl_hint = QLabel("Üdvözöllek, v1.04")
         self.lbl_hint.setStyleSheet("color:#AAB3BB; font-size:11px;")
         lr.addWidget(self.btn_login, 0)
         lr.addWidget(self.lbl_hint, 1)

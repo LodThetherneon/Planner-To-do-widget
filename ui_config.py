@@ -10,9 +10,10 @@ ANIM_DURATION_MS = 180
 REFRESH_RATE_SECONDS = 300
 ALWAYS_ON_TOP = False
 
-STARTSOUND = "sound1.mp3"
-COMPLETESOUND = "complete.mp3"
-REOPENSOUND = "reopen.mp3"
+STARTSOUND   = "sound1.wav"
+COMPLETESOUND = "complete.wav"
+REOPENSOUND  = "reopen.wav"
+
 
 
 def today_ymd() -> str:

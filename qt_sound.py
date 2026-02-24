@@ -1,25 +1,44 @@
 # qt_sound.py
+from __future__ import annotations
+
 import os
+import sys
+from pathlib import Path
 
-# Optional: keep pygame-based sound, but don't force it (avoid "bugos" dependency).
-# If pygame is present, use it; otherwise do nothing.
-try:
-    import pygame  # type: ignore
-except Exception:
-    pygame = None
+from PyQt6.QtCore import QUrl
+from PyQt6.QtMultimedia import QSoundEffect
 
+# GLOBÁLIS szótár: Ez a legfontosabb! 
+# Megakadályozza, hogy a Python letörölje a lejátszót, mielőtt a hang véget érne.
+_PLAYERS: dict[str, QSoundEffect] = {}
 
-def play_sound(path: str) -> None:
-    try:
-        if not path or not os.path.exists(path):
-            return
-        if pygame is None:
-            return
-        if not pygame.mixer.get_init():
-            pygame.mixer.init()
-        pygame.mixer.music.load(path)
-        pygame.mixer.music.set_volume(0.6)
-        pygame.mixer.music.play()
-    except Exception:
-        # Never crash the UI due to sound
+def _find_sound_path(filename: str) -> str | None:
+    if hasattr(sys, "_MEIPASS"):
+        p = Path(sys._MEIPASS) / filename
+        if p.exists(): return str(p)
+        
+    if getattr(sys, 'frozen', False):
+        p = Path(sys.executable).parent / filename
+        if p.exists(): return str(p)
+        
+    p = Path(__file__).parent / filename
+    if p.exists(): return str(p)
+    
+    return None
+
+def play_sound(filename: str) -> None:
+    path = _find_sound_path(filename)
+    if not path or not os.path.exists(path):
         return
+
+    # Csak egyszer hozzuk létre a lejátszót fájlonként, utána újrahasznosítjuk
+    if filename not in _PLAYERS:
+        effect = QSoundEffect()
+        # A QUrl.fromLocalFile tökéletesen kezeli az ékezetes (Széchenyi) útvonalakat
+        effect.setSource(QUrl.fromLocalFile(path))
+        effect.setVolume(1.0)
+        _PLAYERS[filename] = effect
+
+    # Ha épp játsza, állítsa le és indítsa újra
+    _PLAYERS[filename].stop()
+    _PLAYERS[filename].play()
