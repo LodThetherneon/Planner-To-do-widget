@@ -439,7 +439,6 @@ class TaskWidget(ctk.CTk):
         threading.Thread(target=worker, daemon=True).start()
 
     def toggle_size_animated(self):
-        # animáció nélkül, instant váltás
         if self.is_animating:
             return
 
@@ -554,22 +553,25 @@ class TaskWidget(ctk.CTk):
         today = datetime.now().date()
         due_date = self._parse_date(date_str)
         if not due_date:
-            due_date = datetime(2099, 12, 31).date()
             diff = 9999
         else:
             diff = (due_date - today).days
 
         if task['status'] == 'FOLYAMATBAN':
             if diff < 0:
-                return (0, due_date)
+                return (0, due_date or datetime(2099, 12, 31).date())
             if diff <= 7:
-                return (1, due_date)
+                return (1, due_date or datetime(2099, 12, 31).date())
             if diff == 9999:
-                return (3, due_date)
+                return (3, datetime(2099, 12, 31).date())
             return (2, due_date)
 
-        abs_diff = abs(diff) if diff != 9999 else 9999
-        return (4, abs_diff, -due_date.toordinal())
+        # KÉSZ rendezés:
+        # Jövőbeli dátumok legfelül (legnagyobb dátum), majd visszafelé a múltba.
+        # Nincs határidő → legvégén.
+        if diff == 9999:  # nincs határidő
+            return (5, 0)
+        return (4, -due_date.toordinal())
 
     def _tasks_equal(self, a, b):
         if len(a) != len(b):
@@ -932,6 +934,13 @@ class TaskWidget(ctk.CTk):
                 bot, text=f"📅 {task.get('date','-')}", text_color="#888888", font=FONT_TEXT_SMALL
             ).pack(side="left", padx=5)
 
+            # Visszaállítás gomb: lejárt dátumú KÉSZ feladatnál zöld, egyébként szürke
+            _task_date_obj = self._parse_date(task.get('date'))
+            _today = datetime.now().date()
+            _is_overdue_done = _task_date_obj is not None and _task_date_obj < _today
+            _reopen_text_color = "#00CC44" if _is_overdue_done else "#888"
+            _reopen_hover_color = "#005522" if _is_overdue_done else "#444"
+
             ctk.CTkButton(
                 bot,
                 text="\uE7A7",
@@ -939,8 +948,8 @@ class TaskWidget(ctk.CTk):
                 height=28,
                 font=("Segoe MDL2 Assets", 12),
                 fg_color="transparent",
-                hover_color="#444",
-                text_color="#888",
+                hover_color=_reopen_hover_color,
+                text_color=_reopen_text_color,
                 command=lambda tid=task['id'], ttitle=task['title']: self.undo_completion(
                     tid, ttitle
                 ),
