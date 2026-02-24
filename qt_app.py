@@ -75,7 +75,7 @@ class TaskHudWindow(QWidget):
         # Lapozáshoz szükséges változók
         self._last_tasks: list[TaskViewModel] = []
         self._completed_page = 1
-        
+
         # Guard flag a resizeEvent végtelen ciklus ellen
         self._correcting_size = False
 
@@ -142,10 +142,10 @@ class TaskHudWindow(QWidget):
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        
+
         # MÓDOSÍTÁS ITT: scrollbar policy megváltoztatása
         self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
-        
+
         self.scroll.setFrameShape(QFrame.Shape.NoFrame)
 
         self.scroll.setAutoFillBackground(False)
@@ -690,7 +690,7 @@ class TaskHudWindow(QWidget):
             return (1, absdiff, t.title.lower())
 
         tasks_sorted = sorted(tasks, key=sort_key)
-        
+
         # Feladatok szétválasztása folyamatban lévőkre és kész feladatokra
         active_tasks = [t for t in tasks_sorted if t.status == "FOLYAMATBAN"]
         done_tasks = [t for t in tasks_sorted if t.status == "KESZ"]
@@ -733,7 +733,8 @@ class TaskHudWindow(QWidget):
                 pag_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
                 btn_prev = MinimalButton("left", icon_size=28)
-                btn_prev.setToolTip("Előző oldal")
+                # Tooltip kiszedve: ne jelenjen meg üres buborék
+                # btn_prev.setToolTip("Előző oldal")
                 btn_prev.clicked.connect(self._prev_page)
                 if self._completed_page == 1:
                     btn_prev.setDisabled(True)
@@ -743,7 +744,8 @@ class TaskHudWindow(QWidget):
                 lbl_page.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
                 btn_next = MinimalButton("right", icon_size=28)
-                btn_next.setToolTip("Következő oldal")
+                # Tooltip kiszedve: ne jelenjen meg üres buborék
+                # btn_next.setToolTip("Következő oldal")
                 btn_next.clicked.connect(self._next_page)
                 if self._completed_page == max_pages:
                     btn_next.setDisabled(True)

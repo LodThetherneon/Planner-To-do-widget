@@ -105,7 +105,7 @@ class MinimalButton(QPushButton):
 
             if not self.underMouse():
                 if self.icon_type == "check":
-                    color = QColor("#888888")
+                    color = QColor("#FFFFFF")
                 elif self.icon_type == "undo":
                     color = QColor("#55AAFF")
                 elif self.icon_type == "trash":
@@ -262,7 +262,7 @@ class TaskCard(QFrame):
         due_text = task.due if task.due else "-"
         if task.status == "FOLYAMATBAN":
             self.lbl_date = QLabel(f"{due_text}")
-            self.lbl_date.setStyleSheet("font-size:11px; color:#AAB3BB; background: transparent; border:0px;")
+            self.lbl_date.setStyleSheet("font-size:13px; color:#FFFFFF; background: transparent; border:0px;")
         else:
             self.lbl_date = QLabel(f"KÉSZ · {due_text}")
             self.lbl_date.setStyleSheet("font-size:11px; color:#888888; background: transparent; border:0px;")
