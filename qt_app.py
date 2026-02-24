@@ -72,6 +72,9 @@ class TaskHudWindow(QWidget):
         self._pending_status_text: str | None = None
         self._pending_status_kind: str | None = None
 
+        # FIX: guard flag a resizeEvent végtelen ciklus ellen
+        self._correcting_size = False
+
         self._defaults = _load_defaults()
         self._plan_items: list[dict] = []
         self._plan_by_label: dict[str, dict] = {}
@@ -115,8 +118,8 @@ class TaskHudWindow(QWidget):
         lr.setSpacing(10)
         self.btn_login = QPushButton("Bejelentkezés")
         self.btn_login.clicked.connect(self.start_login_mainthread)
-        self.lbl_hint = QLabel("")
-        self.lbl_hint.setStyleSheet("color:#AAB3BB; font-size:11px;")
+        self.lbl_hint = QLabel("Üdvözöllek, v1.04")
+        self.lbl_hint.setStyleSheet("color:#AAB3BB; font-size:12px;")
         lr.addWidget(self.btn_login, 0)
         lr.addWidget(self.lbl_hint, 1)
 
@@ -165,6 +168,8 @@ class TaskHudWindow(QWidget):
         self.anim = QPropertyAnimation(self, b"size")
         self.anim.setDuration(ANIM_DURATION_MS)
         self.anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        
+        self.anim.finished.connect(self._on_anim_finished)
 
         self.header.refresh_clicked.connect(lambda: self.start_refresh(skip_intro=False))
         self.header.toggle_clicked.connect(self.toggle_expand)
@@ -182,6 +187,40 @@ class TaskHudWindow(QWidget):
         self.start_refresh(skip_intro=False)
         QTimer.singleShot(300, self._load_plans_from_graph)
 
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        handle = self.windowHandle()
+        if handle:
+            try:
+                handle.screenChanged.connect(self._on_screen_changed)
+            except Exception:
+                pass
+
+    def _on_screen_changed(self, _screen=None) -> None:
+        if self.anim.state() == QPropertyAnimation.State.Running:
+            self.anim.stop()
+        self._correcting_size = True
+        self._apply_expanded_state(self._expanded, immediate=True)
+        self._correcting_size = False
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if self._correcting_size:
+            return
+        if self.anim.state() == QPropertyAnimation.State.Running:
+            return
+        expected_h = WINDOW_MAX_HEIGHT if self._expanded else WINDOW_MIN_HEIGHT
+        if self.width() != WINDOW_WIDTH or self.height() != expected_h:
+            self._correcting_size = True
+            self.resize(WINDOW_WIDTH, expected_h)
+            self._correcting_size = False
+
+    def _on_anim_finished(self) -> None:
+        expected_h = WINDOW_MAX_HEIGHT if self._expanded else WINDOW_MIN_HEIGHT
+        self._correcting_size = True
+        self.resize(WINDOW_WIDTH, expected_h)
+        self._correcting_size = False
+
     def _show_startup_banner(self) -> None:
         if not self._startup_banner_active:
             return
@@ -189,7 +228,6 @@ class TaskHudWindow(QWidget):
             '<span style="font-weight:900;">Planner Widget</span> '
             '<span style="font-weight:900; color:#55AAFF;">✓</span>'
         )
-
         try:
             self.header.lbl.repaint()
         except Exception:
@@ -308,6 +346,8 @@ class TaskHudWindow(QWidget):
         target = QSize(WINDOW_WIDTH, target_h)
 
         if immediate:
+            if self.anim.state() == QPropertyAnimation.State.Running:
+                self.anim.stop()
             self.resize(target)
             return
 
@@ -382,7 +422,12 @@ class TaskHudWindow(QWidget):
 
         labels = sorted(labels, key=lambda s: s.lower())
         self.add_panel.set_plan_options(labels)
-        self.lbl_hint.setText("Üdvözöllek, v1.03")
+
+        display_name = backend.get_my_display_name()
+        if display_name:
+            self.lbl_hint.setText(f"Üdvözöllek {display_name}, v1.03")
+        else:
+            self.lbl_hint.setText("Üdvözöllek, v1.03")
 
     def _on_plan_changed(self, plan_label: str) -> None:
         plan = self._plan_by_label.get(plan_label)

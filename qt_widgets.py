@@ -85,7 +85,7 @@ class MinimalButton(QPushButton):
 
         bg_alpha = 0
         bg_color = QColor("#FFFFFF")
-        color = QColor("#AAB3BB")
+        color = QColor("#FFFFFF")
 
         if self.underMouse():
             bg_alpha = 20
@@ -102,11 +102,11 @@ class MinimalButton(QPushButton):
 
         if not self.underMouse():
             if self.icon_type == "check":
-                color = QColor("#888888")
+                color = QColor("#FFFFFF")
             elif self.icon_type == "undo":
-                color = QColor("#55AAFF")
+                color = QColor("#FFFFFF")
             elif self.icon_type == "trash":
-                color = QColor("#AA5555")
+                color = QColor("#E03F3F")
 
         if bg_alpha > 0:
             bg_color.setAlpha(bg_alpha)
@@ -217,7 +217,7 @@ class TaskCard(QFrame):
         self.lbl_title = QLabel(task.title)
         self.lbl_title.setWordWrap(True)
         if task.status == "FOLYAMATBAN":
-            self.lbl_title.setStyleSheet("color:#FFFFFF; font-weight:800; font-size:13px; background: transparent; border:0px;")
+            self.lbl_title.setStyleSheet("color:#FFFFFF; font-weight:800; font-size:15px; background: transparent; border:0px;")
         else:
             self.lbl_title.setStyleSheet("color:#707070; font-weight:700; font-size:11px; background: transparent; border:0px;")
 
@@ -244,7 +244,7 @@ class TaskCard(QFrame):
         due_text = task.due if task.due else "-"
         if task.status == "FOLYAMATBAN":
             self.lbl_date = QLabel(f"{due_text}")
-            self.lbl_date.setStyleSheet("font-size:11px; color:#AAB3BB; background: transparent; border:0px;")
+            self.lbl_date.setStyleSheet("font-size:11px; color:#FFFFFF; background: transparent; border:0px;")
         else:
             self.lbl_date = QLabel(f"KÉSZ · {due_text}")
             self.lbl_date.setStyleSheet("font-size:11px; color:#888888; background: transparent; border:0px;")

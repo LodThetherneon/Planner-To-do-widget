@@ -137,6 +137,26 @@ def get_my_user_id(token: str):
         return None
 
 
+def get_my_display_name(token: str | None = None) -> str | None:
+    if not token:
+        token = get_access_token_silent()
+    if not token:
+        return None
+
+    url = "https://graph.microsoft.com/v1.0/me"
+    headers = {"Authorization": f"Bearer {token}"}
+    try:
+        res = session.get(url, headers=headers, timeout=10)
+        if res.status_code != 200:
+            return None
+        data = res.json() or {}
+        name = (data.get("displayName") or "").strip()
+        return name or None
+    except Exception as e:
+        print(f"DisplayName lekérési hiba: {e}")
+        return None
+
+
 def list_my_plans():
     # GET /me/planner/plans [web:268]
     token = get_access_token_silent()

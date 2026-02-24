@@ -106,7 +106,6 @@ QPushButton:disabled {
     color: #8E99A3;
     border-color: #2C3A45;
 }
-}
 
 /* Task card */
 .TaskCard {
