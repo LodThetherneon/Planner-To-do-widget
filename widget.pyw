@@ -489,18 +489,22 @@ class TaskWidget(ctk.CTk):
         today = datetime.now().date()
         due_date = self._parse_date(date_str)
         if not due_date:
-            due_date = datetime(2099, 12, 31).date()
             diff = 9999
         else:
             diff = (due_date - today).days
         if task['status'] == 'FOLYAMATBAN':
-            if diff < 0: return (0, due_date)
-            if diff <= 7: return (1, due_date)
-            if diff == 9999: return (3, due_date)
+            if diff < 0: return (0, due_date or datetime(2099, 12, 31).date())
+            if diff <= 7: return (1, due_date or datetime(2099, 12, 31).date())
+            if diff == 9999: return (3, datetime(2099, 12, 31).date())
             return (2, due_date)
-        # KÉSZ: sort by distance from today (closest to today first), then by date descending
-        abs_diff = abs(diff) if diff != 9999 else 9999
-        return (4, abs_diff, -due_date.toordinal())
+        # KÉSZ rendezés:
+        # 1. Jövőbeli dátumok: legfeljebb → visszafelé mai dátum felé (csökkenő dátum)
+        # 2. Múltbeli dátumok: mai dátumtól visszafelé (csökkenő dátum, folytatás)
+        # 3. Nincs határidő: legvégén
+        # Összességében: dátum szerint csökkenő sorrend (legnagyobb dátum legfelül)
+        if diff == 9999:  # nincs határidő → legvégén
+            return (5, 0)
+        return (4, -due_date.toordinal())
 
     def _tasks_equal(self, a, b):
         if len(a) != len(b):
@@ -734,7 +738,13 @@ class TaskWidget(ctk.CTk):
                 ctk.CTkLabel(chk, text="\uE73E", text_color="#00FF00", font=("Segoe MDL2 Assets", 10)).place(relx=0.5, rely=0.5, anchor="center")
                 ctk.CTkLabel(bot, text="KÉSZ", text_color="#888888", font=("Segoe UI", 10, "bold")).pack(side="left")
                 ctk.CTkLabel(bot, text=f"📅 {task.get('date','-')}", text_color="#888888", font=FONT_TEXT_SMALL).pack(side="left", padx=5)
-                ctk.CTkButton(bot, text="\uE7A7", width=28, height=28, font=("Segoe MDL2 Assets", 12), fg_color="transparent", hover_color="#444", text_color="#888", command=lambda tid=task['id'], ttitle=task['title']: self.undo_completion(tid, ttitle)).pack(side="right")
+                # Visszaállítás gomb: lejárt dátumú KÉSZ feladatnál zöld, egyébként szürke
+                _task_date_obj = self._parse_date(task.get('date'))
+                _today = datetime.now().date()
+                _is_overdue_done = _task_date_obj is not None and _task_date_obj < _today
+                _reopen_text_color = "#00CC44" if _is_overdue_done else "#888"
+                _reopen_hover_color = "#005522" if _is_overdue_done else "#444"
+                ctk.CTkButton(bot, text="\uE7A7", width=28, height=28, font=("Segoe MDL2 Assets", 12), fg_color="transparent", hover_color=_reopen_hover_color, text_color=_reopen_text_color, command=lambda tid=task['id'], ttitle=task['title']: self.undo_completion(tid, ttitle)).pack(side="right")
                 ctk.CTkButton(bot, text="\uE74D", width=28, height=28, font=("Segoe MDL2 Assets", 12), fg_color="transparent", hover_color="#A00", text_color="#FF5555",
                               command=lambda tid=task['id'], ttitle=task['title']: self.delete_task(tid, ttitle)).pack(side="right", padx=(4,0))
 
