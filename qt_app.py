@@ -72,7 +72,11 @@ class TaskHudWindow(QWidget):
         self._pending_status_text: str | None = None
         self._pending_status_kind: str | None = None
 
-        # FIX: guard flag a resizeEvent végtelen ciklus ellen
+        # Lapozáshoz szükséges változók
+        self._last_tasks: list[TaskViewModel] = []
+        self._completed_page = 1
+        
+        # Guard flag a resizeEvent végtelen ciklus ellen
         self._correcting_size = False
 
         self._defaults = _load_defaults()
@@ -118,8 +122,8 @@ class TaskHudWindow(QWidget):
         lr.setSpacing(10)
         self.btn_login = QPushButton("Bejelentkezés")
         self.btn_login.clicked.connect(self.start_login_mainthread)
-        self.lbl_hint = QLabel("Üdvözöllek, v1.04")
-        self.lbl_hint.setStyleSheet("color:#AAB3BB; font-size:12px;")
+        self.lbl_hint = QLabel("Üdvözöllek, v1.03")
+        self.lbl_hint.setStyleSheet("color:#AAB3BB; font-size:11px;")
         lr.addWidget(self.btn_login, 0)
         lr.addWidget(self.lbl_hint, 1)
 
@@ -168,7 +172,6 @@ class TaskHudWindow(QWidget):
         self.anim = QPropertyAnimation(self, b"size")
         self.anim.setDuration(ANIM_DURATION_MS)
         self.anim.setEasingCurve(QEasingCurve.Type.OutCubic)
-        
         self.anim.finished.connect(self._on_anim_finished)
 
         self.header.refresh_clicked.connect(lambda: self.start_refresh(skip_intro=False))
@@ -635,7 +638,20 @@ class TaskHudWindow(QWidget):
             if w is not None:
                 w.deleteLater()
 
+    def _prev_page(self) -> None:
+        if self._completed_page > 1:
+            self._completed_page -= 1
+            self._render_tasks(self._last_tasks)
+
+    def _next_page(self) -> None:
+        done_count = sum(1 for t in self._last_tasks if t.status == "KESZ")
+        max_pages = max(1, (done_count + 11) // 12)
+        if self._completed_page < max_pages:
+            self._completed_page += 1
+            self._render_tasks(self._last_tasks)
+
     def _render_tasks(self, tasks: list[TaskViewModel]) -> None:
+        self._last_tasks = tasks
         self._clear_task_widgets()
 
         today = datetime.now().date()
@@ -670,18 +686,71 @@ class TaskHudWindow(QWidget):
             return (1, absdiff, t.title.lower())
 
         tasks_sorted = sorted(tasks, key=sort_key)
+        
+        # Feladatok szétválasztása folyamatban lévőkre és kész feladatokra
+        active_tasks = [t for t in tasks_sorted if t.status == "FOLYAMATBAN"]
+        done_tasks = [t for t in tasks_sorted if t.status == "KESZ"]
 
-        sep_done_placed = False
-        for t in tasks_sorted:
-            if (not sep_done_placed) and t.status == "KESZ":
-                self.scroll_layout.insertWidget(self.scroll_layout.count() - 1, SeparatorLine())
-                sep_done_placed = True
-
+        # Folyamatban lévő feladatok megjelenítése (összes)
+        for t in active_tasks:
             card = TaskCard(t)
             card.done_clicked.connect(self._on_done)
             card.reopen_clicked.connect(self._on_reopen)
             card.delete_clicked.connect(self._on_delete)
             self.scroll_layout.insertWidget(self.scroll_layout.count() - 1, card)
+
+        # Kész feladatok megjelenítése lapozva (max 12 oldalanként)
+        if done_tasks:
+            self.scroll_layout.insertWidget(self.scroll_layout.count() - 1, SeparatorLine())
+
+            max_pages = max(1, (len(done_tasks) + 11) // 12)
+            if self._completed_page > max_pages:
+                self._completed_page = max_pages
+            elif self._completed_page < 1:
+                self._completed_page = 1
+
+            start_idx = (self._completed_page - 1) * 12
+            end_idx = start_idx + 12
+            page_tasks = done_tasks[start_idx:end_idx]
+
+            for t in page_tasks:
+                card = TaskCard(t)
+                card.done_clicked.connect(self._on_done)
+                card.reopen_clicked.connect(self._on_reopen)
+                card.delete_clicked.connect(self._on_delete)
+                self.scroll_layout.insertWidget(self.scroll_layout.count() - 1, card)
+
+            # Lapozó vezérlő (csak ha több mint 1 oldalnyi kész feladat van)
+            if max_pages > 1:
+                pag_widget = QWidget()
+                pag_widget.setStyleSheet("background: transparent; border: 0px;")
+                pag_layout = QHBoxLayout(pag_widget)
+                pag_layout.setContentsMargins(0, 10, 0, 10)
+                pag_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+                btn_prev = MinimalButton("left", icon_size=28)
+                btn_prev.setToolTip("Előző oldal")
+                btn_prev.clicked.connect(self._prev_page)
+                if self._completed_page == 1:
+                    btn_prev.setDisabled(True)
+
+                lbl_page = QLabel(f"{self._completed_page} / {max_pages}")
+                lbl_page.setStyleSheet("color: #FFFFFF; font-size: 14px; font-weight: bold; background: transparent;")
+                lbl_page.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+                btn_next = MinimalButton("right", icon_size=28)
+                btn_next.setToolTip("Következő oldal")
+                btn_next.clicked.connect(self._next_page)
+                if self._completed_page == max_pages:
+                    btn_next.setDisabled(True)
+
+                pag_layout.addWidget(btn_prev)
+                pag_layout.addSpacing(15)
+                pag_layout.addWidget(lbl_page)
+                pag_layout.addSpacing(15)
+                pag_layout.addWidget(btn_next)
+
+                self.scroll_layout.insertWidget(self.scroll_layout.count() - 1, pag_widget)
 
     def _on_done(self, task_id: str, title: str) -> None:
         if not self._startup_banner_active:

@@ -85,28 +85,31 @@ class MinimalButton(QPushButton):
 
         bg_alpha = 0
         bg_color = QColor("#FFFFFF")
-        color = QColor("#FFFFFF")
+        color = QColor("#AAB3BB")
 
-        if self.underMouse():
-            bg_alpha = 20
-            color = QColor("#FFFFFF")
-            
-            if self.icon_type in ["close", "trash"]:
-                color = QColor("#FF5555")
-                bg_color = QColor("#FF5555")
-                bg_alpha = 30
-            elif self.icon_type == "check":
-                color = QColor("#00FF88")
-                bg_color = QColor("#00FF88")
+        if not self.isEnabled():
+            color = QColor("#555555")
+        else:
+            if self.underMouse():
                 bg_alpha = 20
+                color = QColor("#FFFFFF")
+                
+                if self.icon_type in ["close", "trash"]:
+                    color = QColor("#FF5555")
+                    bg_color = QColor("#FF5555")
+                    bg_alpha = 30
+                elif self.icon_type == "check":
+                    color = QColor("#00FF88")
+                    bg_color = QColor("#00FF88")
+                    bg_alpha = 20
 
-        if not self.underMouse():
-            if self.icon_type == "check":
-                color = QColor("#FFFFFF")
-            elif self.icon_type == "undo":
-                color = QColor("#FFFFFF")
-            elif self.icon_type == "trash":
-                color = QColor("#E03F3F")
+            if not self.underMouse():
+                if self.icon_type == "check":
+                    color = QColor("#888888")
+                elif self.icon_type == "undo":
+                    color = QColor("#55AAFF")
+                elif self.icon_type == "trash":
+                    color = QColor("#AA5555")
 
         if bg_alpha > 0:
             bg_color.setAlpha(bg_alpha)
@@ -128,7 +131,6 @@ class MinimalButton(QPushButton):
         if self.icon_type in ["refresh", "undo"]:
             font = QFont("Segoe UI Symbol", 15)
             painter.setFont(font)
-            # A korrekciót -1.5-ről -2.2-re növeltem, hogy még egy picit feljebb kerüljön
             text_rect = QRectF(self.rect()).translated(0, -2.2)
             symbol = "↻" if self.icon_type == "refresh" else "↺"
             painter.drawText(text_rect, Qt.AlignmentFlag.AlignCenter, symbol)
@@ -152,6 +154,22 @@ class MinimalButton(QPushButton):
                 QPointF(cx - d, cy + d/2),
                 QPointF(cx, cy - d/2),
                 QPointF(cx + d, cy + d/2)
+            ])
+            
+        elif self.icon_type == "left":
+            d = self.width() * 0.18
+            painter.drawPolyline([
+                QPointF(cx + d/2, cy - d),
+                QPointF(cx - d/2, cy),
+                QPointF(cx + d/2, cy + d)
+            ])
+
+        elif self.icon_type == "right":
+            d = self.width() * 0.18
+            painter.drawPolyline([
+                QPointF(cx - d/2, cy - d),
+                QPointF(cx + d/2, cy),
+                QPointF(cx - d/2, cy + d)
             ])
 
         elif self.icon_type == "check":
@@ -217,7 +235,7 @@ class TaskCard(QFrame):
         self.lbl_title = QLabel(task.title)
         self.lbl_title.setWordWrap(True)
         if task.status == "FOLYAMATBAN":
-            self.lbl_title.setStyleSheet("color:#FFFFFF; font-weight:800; font-size:15px; background: transparent; border:0px;")
+            self.lbl_title.setStyleSheet("color:#FFFFFF; font-weight:800; font-size:13px; background: transparent; border:0px;")
         else:
             self.lbl_title.setStyleSheet("color:#707070; font-weight:700; font-size:11px; background: transparent; border:0px;")
 
@@ -244,7 +262,7 @@ class TaskCard(QFrame):
         due_text = task.due if task.due else "-"
         if task.status == "FOLYAMATBAN":
             self.lbl_date = QLabel(f"{due_text}")
-            self.lbl_date.setStyleSheet("font-size:11px; color:#FFFFFF; background: transparent; border:0px;")
+            self.lbl_date.setStyleSheet("font-size:11px; color:#AAB3BB; background: transparent; border:0px;")
         else:
             self.lbl_date = QLabel(f"KÉSZ · {due_text}")
             self.lbl_date.setStyleSheet("font-size:11px; color:#888888; background: transparent; border:0px;")
