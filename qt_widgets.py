@@ -292,8 +292,8 @@ class TaskCard(QFrame):
         top.addWidget(self.lbl_title, 1)
         top.addWidget(self.edit_title, 1)
         
-        if task.status != "FOLYAMATBAN":
-            # Edit title button for completed tasks
+        if task.status == "FOLYAMATBAN":
+            # Edit title button for active tasks
             self.btn_edit_title = MinimalButton("edit", icon_size=20)
             self.btn_edit_title.setToolTip("Név szerkesztése")
             self.btn_edit_title.clicked.connect(self._on_title_edit_clicked)
@@ -350,8 +350,8 @@ class TaskCard(QFrame):
         bottom.setSpacing(10)
         bottom.addWidget(self.btn_left, 0)
         
-        if task.status != "FOLYAMATBAN":
-            # Date edit button to the left of date (but right of undo button)
+        if task.status == "FOLYAMATBAN":
+            # Date edit button to the left of date (but right of check button)
             self.btn_edit_date = MinimalButton("edit", icon_size=20)
             self.btn_edit_date.setToolTip("Dátum szerkesztése")
             self.btn_edit_date.clicked.connect(self._on_date_edit_clicked)
