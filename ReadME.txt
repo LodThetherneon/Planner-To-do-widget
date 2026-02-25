@@ -1,16 +1,13 @@
 Üdv kedves MUNKATÁÁÁÁRS!
 
--Mi nem jó? - Hát pár dolog LOL
-
--Csak plannerben frissíti a feladatok státuszát. To Do-ban nem pedig az a widget neve xd
-
--Első megnyitáskor autentikáljál köszkee!
-
--Ja és utána zárd be a progit és nyisd meg újra akkor lesz jó csak.
-
--Várd meg amig betölt és hallod a hangot azután nyisd csak le a menüt és nem fog bugolni xd!!!
+- Csomagold ki a Zip fájlt.
+- Indítsd el az .exe fájlt.
+- Első elindításkor nyisd le a menüt és jelentkezz be ( megnyílik egy böngésző ahol be kell jelentkezni a Microsoft fiókba)
+- Ha géppel akarod elindítani a parancsikon fájlt helyezd be az indító mappába (windows+r, shell:stratup) 
+- Hotkey, hogy az ablak bárhol megjelenjen, (alt+w)
 
 
 Patreon link: hhtps://Patriknakgyűjtökhogynelegyencsoves.com
+
 
 Semmilyen jog nincs fenttartva. 
