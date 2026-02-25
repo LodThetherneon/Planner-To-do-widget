@@ -222,6 +222,8 @@ class TaskHudWindow(QWidget):
         self.header.refresh_clicked.connect(lambda: self.start_refresh(skip_intro=False))
         self.header.toggle_clicked.connect(self.toggle_expand)
         self.header.close_clicked.connect(self._close_requested)
+        # Új: rácsatlakozunk a szövegváltozásra, hogy igazítsuk a méretet ha kell
+        self.header.text_changed.connect(self._adjust_mini_size_if_needed)
 
         self._apply_expanded_state(False, immediate=True)
 
@@ -255,7 +257,16 @@ class TaskHudWindow(QWidget):
         expected_h = WINDOW_MAX_HEIGHT if self._expanded else WINDOW_MIN_HEIGHT
         if not getattr(self, "_expanded_width", True):
             expected_h = WINDOW_MIN_HEIGHT
-        expected_w = WINDOW_WIDTH if getattr(self, "_expanded_width", True) else WINDOW_MIN_WIDTH
+
+        if getattr(self, "_expanded_width", True):
+            expected_w = WINDOW_WIDTH
+        else:
+            # Ha össze van csukva, ellenőrizzük a fejlécszöveg méretét
+            self.header.lbl.adjustSize()
+            needed_w = self.header.sizeHint().width()
+            # Felveheti a szöveghez szükséges méretet, de minimum a fix szélességet
+            expected_w = max(WINDOW_MIN_WIDTH, needed_w)
+
         return expected_w, expected_h
 
     def _unlock_width_constraints(self) -> None:
@@ -266,6 +277,18 @@ class TaskHudWindow(QWidget):
         expected_w, _ = self._expected_size()
         self.setMinimumWidth(expected_w)
         self.setMaximumWidth(expected_w)
+
+    def _adjust_mini_size_if_needed(self) -> None:
+        """Dinamikusan szélesíti az ablakot, ha új, hosszú szöveg jön be mini módban."""
+        if not getattr(self, "_expanded_width", True):
+            if self.anim.state() == QPropertyAnimation.State.Running:
+                return
+            self._correcting_size = True
+            expected_w, expected_h = self._expected_size()
+            self._unlock_width_constraints()
+            self.resize(expected_w, expected_h)
+            self._lock_width_constraints()
+            self._correcting_size = False
 
     # ──────────────────────────────────────────────────────────────────────────
 
@@ -473,11 +496,6 @@ class TaskHudWindow(QWidget):
 
     def _apply_expanded_width_state(self, expanded_width: bool, immediate: bool = False) -> None:
         self._expanded_width = expanded_width
-        
-        # ────────────────────────────────────────────────────────
-        # Jelezzük a headernek, hogy mini módban vagyunk-e
-        self.header.set_mini_mode(not expanded_width)
-        # ────────────────────────────────────────────────────────
 
         self.header.btn_h_toggle.icon_type = "left" if expanded_width else "right"
         self.header.btn_h_toggle.update()
@@ -485,6 +503,13 @@ class TaskHudWindow(QWidget):
         self.header.btn_refresh.setVisible(expanded_width)
         self.header.btn_toggle.setVisible(expanded_width)
         self.header.btn_close.setVisible(expanded_width)
+
+        if self._last_counts_active is not None and self._last_counts_expired is not None:
+            if not self._startup_banner_active and not self._hotkey_banner_active:
+                self.header.set_counts(
+                    active=self._last_counts_active,
+                    expired=self._last_counts_expired
+                )
 
         self._apply_expanded_state(self._expanded, immediate=immediate)
 
@@ -498,11 +523,8 @@ class TaskHudWindow(QWidget):
 
         self.header.set_toggle_icon("▴" if expanded else "▾")
 
-        target_h = WINDOW_MAX_HEIGHT if expanded else WINDOW_MIN_HEIGHT
-        if not getattr(self, "_expanded_width", True):
-            target_h = WINDOW_MIN_HEIGHT
-
-        target_w = WINDOW_WIDTH if getattr(self, "_expanded_width", True) else WINDOW_MIN_WIDTH
+        # Dinamikus célméret számolása hardkódolt értékek helyett!
+        target_w, target_h = self._expected_size()
         target = QSize(target_w, target_h)
 
         # Animáció/resize előtt feloldjuk a lock-ot
@@ -1080,6 +1102,7 @@ class _Header(QWidget):
     toggle_clicked = pyqtSignal()
     close_clicked = pyqtSignal()
     h_toggle_clicked = pyqtSignal()
+    text_changed = pyqtSignal()  # ÚJ: Jelez a szülőnek, ha változott a szöveg
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -1098,11 +1121,10 @@ class _Header(QWidget):
         self.btn_refresh.setToolTip("Frissítés")
         self.btn_toggle.setToolTip("Kinyit/bezár")
         self.btn_close.setToolTip("Bezárás")
-        
-        # ÚJ: tároljuk az utolsó értékeket és a módot
+
         self._last_active: int = 0
         self._last_expired: int = 0
-        self._mini_mode: bool = False
+        self._has_real_counts: bool = False
 
         row = QHBoxLayout(self)
         row.setContentsMargins(14, 12, 10, 10)
@@ -1117,45 +1139,31 @@ class _Header(QWidget):
         self.btn_refresh.clicked.connect(self.refresh_clicked.emit)
         self.btn_toggle.clicked.connect(self.toggle_clicked.emit)
         self.btn_close.clicked.connect(self.close_clicked.emit)
-    
-    def set_mini_mode(self, mini: bool) -> None:
-        if self._mini_mode != mini:
-            self._mini_mode = mini
-            # Ha van tárolt adatunk, frissítsük a megjelenítést
-            self.set_counts(self._last_active, self._last_expired)
 
     def set_counts(self, active: int, expired: int) -> None:
+        self._has_real_counts = True
         self._last_active = int(active or 0)
         self._last_expired = int(expired or 0)
-        
+
         active_val = self._last_active
         expired_val = self._last_expired
 
-        if self._mini_mode:
-            # Rövid nézet: "5 / 2!"
-            if expired_val > 0:
-                html = (
-                    f"{active_val} / "
-                    f"<span style='color:#FF5555; font-weight:800;'>{expired_val}!</span>"
-                )
-            else:
-                html = f"{active_val} db"
+        if expired_val > 0:
+            html = (
+                f"{active_val} <b>Feladat</b> | "
+                f"<span style='color:#FF5555; font-weight:800;'>{expired_val} Lejárt</span>"
+            )
         else:
-            # Normál nézet
-            if expired_val > 0:
-                html = (
-                    f"{active_val} <b>Feladat</b> | "
-                    f"<span style='color:#FF5555; font-weight:800;'>{expired_val} Lejárt</span>"
-                )
-            else:
-                html = f"{active_val} <b>Feladat</b>"
+            html = f"{active_val} <b>Feladat</b>"
 
         self.lbl.setStyleSheet("")
         self.lbl.setText(html)
+        self.text_changed.emit()  # Frissült a szöveg
 
     def set_text(self, text: str) -> None:
         self.lbl.setStyleSheet("")
         self.lbl.setText(text)
+        self.text_changed.emit()  # Frissült a szöveg
 
     def set_toggle_icon(self, txt: str) -> None:
         self.btn_toggle.icon_type = "up" if txt == "▴" else "down"
@@ -1174,6 +1182,7 @@ class _Header(QWidget):
         else:
             self.lbl.setStyleSheet("color:#EAEAEA; font-weight:700;")
         self.lbl.setText(text)
+        self.text_changed.emit()  # Frissült a szöveg
 
 
 class _AddTaskPanel(QFrame):
