@@ -61,45 +61,25 @@ QScrollBar::sub-page:vertical {
     background: none;
 }
 
-/* 3 csík (grip) a scrollbar csúszkán */
+/* 
+   Modern Grab/Grip a csúszka közepén
+   Az image: url(data:...) egy apró, átlátszó SVG-t hív meg,
+   ami önmagában tartalmazza a 3 lekerekített csíkot (8x12 pixel méretben).
+*/
 QScrollBar::handle:vertical {
+    background-color: rgba(255, 255, 255, 0.12);
     border-radius: 6px;
-    min-height: 30px;
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-        stop: 0 rgba(255,255,255,0.12),
-        stop: 0.42 rgba(255,255,255,0.12),
-        stop: 0.421 rgba(255,255,255,0.5),
-        stop: 0.44 rgba(255,255,255,0.5),
-        stop: 0.441 rgba(255,255,255,0.12),
-        stop: 0.49 rgba(255,255,255,0.12),
-        stop: 0.491 rgba(255,255,255,0.5),
-        stop: 0.51 rgba(255,255,255,0.5),
-        stop: 0.511 rgba(255,255,255,0.12),
-        stop: 0.56 rgba(255,255,255,0.12),
-        stop: 0.561 rgba(255,255,255,0.5),
-        stop: 0.58 rgba(255,255,255,0.5),
-        stop: 0.581 rgba(255,255,255,0.12),
-        stop: 1 rgba(255,255,255,0.12)
-    );
+    min-height: 40px;
+    
+    /* Halvány (40%-os) csíkok SVG-ben */
+    image: url("data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iOCIgaGVpZ2h0PSIxMiIgdmlld0JveD0iMCAwIDggMTIiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHJlY3QgeD0iMCIgeT0iMCIgd2lkdGg9IjgiIGhlaWdodD0iMiIgZmlsbD0icmdiYSgyNTUsMjU1LDI1NSwwLjQpIiByeD0iMSIvPjxyZWN0IHg9IjAiIHk9IjUiIHdpZHRoPSI4IiBoZWlnaHQ9IjIiIGZpbGw9InJnYmEoMjU1LDI1NSwyNTUsMC40KSIgcng9IjEiLz48cmVjdCB4PSIwIiB5PSIxMCIgd2lkdGg9IjgiIGhlaWdodD0iMiIgZmlsbD0icmdiYSgyNTUsMjU1LDI1NSwwLjQpIiByeD0iMSIvPjwvc3ZnPg==");
 }
 
 QScrollBar::handle:vertical:hover {
-    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-        stop: 0 rgba(255,255,255,0.18),
-        stop: 0.42 rgba(255,255,255,0.18),
-        stop: 0.421 rgba(255,255,255,0.8),
-        stop: 0.44 rgba(255,255,255,0.8),
-        stop: 0.441 rgba(255,255,255,0.18),
-        stop: 0.49 rgba(255,255,255,0.18),
-        stop: 0.491 rgba(255,255,255,0.8),
-        stop: 0.51 rgba(255,255,255,0.8),
-        stop: 0.511 rgba(255,255,255,0.18),
-        stop: 0.56 rgba(255,255,255,0.18),
-        stop: 0.561 rgba(255,255,255,0.8),
-        stop: 0.58 rgba(255,255,255,0.8),
-        stop: 0.581 rgba(255,255,255,0.18),
-        stop: 1 rgba(255,255,255,0.18)
-    );
+    background-color: rgba(255, 255, 255, 0.18);
+    
+    /* Élesebb (90%-os) csíkok hover állapotban */
+    image: url("data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iOCIgaGVpZ2h0PSIxMiIgdmlld0JveD0iMCAwIDggMTIiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHJlY3QgeD0iMCIgeT0iMCIgd2lkdGg9IjgiIGhlaWdodD0iMiIgZmlsbD0icmdiYSgyNTUsMjU1LDI1NSwwLjkpIiByeD0iMSIvPjxyZWN0IHg9IjAiIHk9IjUiIHdpZHRoPSI4IiBoZWlnaHQ9IjIiIGZpbGw9InJnYmEoMjU1LDI1NSwyNTUsMC45KSIgcng9IjEiLz48cmVjdCB4PSIwIiB5PSIxMCIgd2lkdGg9IjgiIGhlaWdodD0iMiIgZmlsbD0icmdiYSgyNTUsMjU1LDI1NSwwLjkpIiByeD0iMSIvPjwvc3ZnPg==");
 }
 
 QScrollBar::add-line:vertical,

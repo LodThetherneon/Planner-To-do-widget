@@ -137,7 +137,7 @@ class TaskHudWindow(QWidget):
         lr.setSpacing(10)
         self.btn_login = QPushButton("Bejelentkezés")
         self.btn_login.clicked.connect(self.start_login_mainthread)
-        self.lbl_hint = QLabel("Üdv, v1.04")
+        self.lbl_hint = QLabel("Üdv, v1.05")
         self.lbl_hint.setStyleSheet("color:#AAB3BB; font-size:11px;")
         
         self.btn_edit_all = QPushButton("Szerkesztés")
@@ -537,9 +537,9 @@ class TaskHudWindow(QWidget):
 
         display_name = backend.get_my_display_name()
         if display_name:
-            self.lbl_hint.setText(f"Üdv {display_name}, v1.04")
+            self.lbl_hint.setText(f"Üdv {display_name}, v1.05")
         else:
-            self.lbl_hint.setText("Üdv, v1.04")
+            self.lbl_hint.setText("Üdv, v1.05")
 
     def _on_plan_changed(self, plan_label: str) -> None:
         plan = self._plan_by_label.get(plan_label)
