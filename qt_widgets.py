@@ -110,7 +110,7 @@ class MinimalButton(QPushButton):
                 elif self.icon_type == "trash":
                     color = QColor("#AA5555")
                 elif self.icon_type == "edit":
-                    color = QColor("#FFFFFF") # Fehér ceruza
+                    color = QColor("#FFFFFF")
 
         if bg_alpha > 0:
             bg_color.setAlpha(bg_alpha)
@@ -128,7 +128,6 @@ class MinimalButton(QPushButton):
         cx = self.width() / 2
         cy = self.height() / 2
 
-        # Karakter alapú ikonok (refresh/undo) eltolás korrekcióval
         if self.icon_type in ["refresh", "undo"]:
             font = QFont("Segoe UI Symbol", 15)
             painter.setFont(font)
@@ -198,15 +197,12 @@ class MinimalButton(QPushButton):
             painter.drawLine(QPointF(cx + w/2 - 0.5, cy - h/2 + 3), QPointF(cx + w/2 - 1, cy + h - 2))
         
         elif self.icon_type == "edit":
-            # 11px sized pencil roughly
             painter.save()
             painter.translate(cx, cy)
-            painter.rotate(45) # Rotate 45 degrees
+            painter.rotate(45)
             w = 2.0
             h = 8.0
-            # Body
             painter.drawRect(QRectF(-w/2, -h/2, w, h))
-            # Tip
             painter.drawPolygon([
                 QPointF(-w/2, -h/2),
                 QPointF(w/2, -h/2),
@@ -215,15 +211,10 @@ class MinimalButton(QPushButton):
             painter.restore()
 
         elif self.icon_type == "save":
-            # Floppy disk icon
             w = 10
             h = 10
             painter.drawRoundedRect(QRectF(cx - w/2, cy - h/2, w, h), 1, 1)
-            # Inner white part
-            # painter.drawRect(QRectF(cx - w/4, cy - h/2, w/2, h/3))
-            # Shutter
             painter.drawRect(QRectF(cx - w/3, cy + h/6, w/1.5, h/3))
-
 
         painter.end()
 
@@ -247,13 +238,14 @@ class TaskCard(QFrame):
     done_clicked = pyqtSignal(str, str)
     reopen_clicked = pyqtSignal(str, str)
     delete_clicked = pyqtSignal(str, str)
-    update_requested = pyqtSignal(str, str, str) # id, title, due
+    content_changed = pyqtSignal()
 
     def __init__(self, task: TaskViewModel, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.task = task
-        self.is_editing_title = False
-        self.is_editing_date = False
+        self.is_in_edit_mode = False
+        self.original_title = task.title
+        self.original_due = task.due if task.due != "Nincs határidő" else ""
 
         bg, border = _card_colors(task)
 
@@ -261,6 +253,7 @@ class TaskCard(QFrame):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(
             f"QFrame {{ background-color:{bg}; border:1px solid {border}; border-radius:10px; }}"
+            "QWidget#TransBg { background: transparent; border: 0px; }"
             "QLabel { background: transparent; border:0px; }"
             "QLineEdit { background: #333333; color: #FFFFFF; border: 1px solid #555555; border-radius: 4px; selection-background-color: #55AAFF; }"
         )
@@ -272,43 +265,30 @@ class TaskCard(QFrame):
         else:
             self.lbl_title.setStyleSheet("color:#707070; font-weight:700; font-size:11px; background: transparent; border:0px;")
         
-        # Title editor (hidden by default)
         self.edit_title = QLineEdit()
-        self.edit_title.setText(task.title)
+        self.edit_title.setText(self.original_title)
         self.edit_title.setVisible(False)
-        self.edit_title.returnPressed.connect(self._on_title_save)
-        self.edit_title.installEventFilter(self) # Install event filter for Esc key
+        self.edit_title.installEventFilter(self)
+        self.edit_title.textChanged.connect(self._on_text_changed)
 
         self.btn_delete = MinimalButton("trash", icon_size=28)
         self.btn_delete.setToolTip("Törlés")
         
         top_row_widget = QWidget()
-        top_row_widget.setStyleSheet("background: transparent; border:0px;")
+        top_row_widget.setObjectName("TransBg")
         top = QHBoxLayout(top_row_widget)
         top.setContentsMargins(15, 14, 15, 6)
         top.setSpacing(10)
         
-        # Add widgets to top row
         top.addWidget(self.lbl_title, 1)
         top.addWidget(self.edit_title, 1)
-        
-        if task.status == "FOLYAMATBAN":
-            # Edit title button for active tasks
-            self.btn_edit_title = MinimalButton("edit", icon_size=20)
-            self.btn_edit_title.setToolTip("Név szerkesztése (Esc a kilépéshez)")
-            self.btn_edit_title.clicked.connect(self._on_title_edit_clicked)
-            # Add to layout right after title (will align right if title is short, or end of line)
-            top.addWidget(self.btn_edit_title, 0, Qt.AlignmentFlag.AlignTop)
-
         top.addWidget(self.btn_delete, 0, Qt.AlignmentFlag.AlignTop)
 
         if task.status == "FOLYAMATBAN":
             self.btn_left = MinimalButton("check", icon_size=30)
-            # self.btn_left.setToolTip("Kész")
             self.btn_left.clicked.connect(self._on_done)
         else:
             self.btn_left = MinimalButton("undo", icon_size=30)
-            # self.btn_left.setToolTip("Visszaállítás")
             self.btn_left.clicked.connect(self._on_reopen)
 
         due_text = task.due if task.due else "-"
@@ -319,14 +299,13 @@ class TaskCard(QFrame):
             self.lbl_date = QLabel(f"KÉSZ · {due_text}")
             self.lbl_date.setStyleSheet("font-size:11px; color:#888888; background: transparent; border:0px;")
         
-        # Date editor (hidden by default)
         self.edit_date = QLineEdit()
-        self.edit_date.setPlaceholderText("ÉÉÉÉ-HH-NN") # Updated exactly like new task
-        self.edit_date.setText(task.due if task.due != "Nincs határidő" else "")
+        self.edit_date.setPlaceholderText("ÉÉÉÉ-HH-NN")
+        self.edit_date.setText(self.original_due)
         self.edit_date.setVisible(False)
         self.edit_date.setFixedWidth(100)
-        self.edit_date.returnPressed.connect(self._on_date_save)
-        self.edit_date.installEventFilter(self) # Install event filter for Esc key
+        self.edit_date.installEventFilter(self)
+        self.edit_date.textChanged.connect(self._on_text_changed)
 
         pr_txt, pr_col = _prio_label_color(task.priority)
 
@@ -336,7 +315,7 @@ class TaskCard(QFrame):
         self.lbl_chip_txt.setStyleSheet(f"color:{pr_col}; font-size:11px; font-weight:700; background: transparent; border:0px;")
 
         chip = QWidget()
-        chip.setStyleSheet("background: transparent; border:0px;")
+        chip.setObjectName("TransBg")
         chip_l = QHBoxLayout(chip)
         chip_l.setContentsMargins(0, 0, 0, 0)
         chip_l.setSpacing(4)
@@ -344,22 +323,14 @@ class TaskCard(QFrame):
         chip_l.addWidget(self.lbl_chip_txt, 0)
 
         bottom_row_widget = QWidget()
-        bottom_row_widget.setStyleSheet("background: transparent; border:0px;")
+        bottom_row_widget.setObjectName("TransBg")
         bottom = QHBoxLayout(bottom_row_widget)
         bottom.setContentsMargins(15, 4, 15, 14)
         bottom.setSpacing(10)
         bottom.addWidget(self.btn_left, 0)
-        
-        if task.status == "FOLYAMATBAN":
-            # Date edit button to the left of date (but right of check button)
-            self.btn_edit_date = MinimalButton("edit", icon_size=20)
-            self.btn_edit_date.setToolTip("Dátum szerkesztése (Esc a kilépéshez)")
-            self.btn_edit_date.clicked.connect(self._on_date_edit_clicked)
-            bottom.addWidget(self.btn_edit_date, 0)
-
-        bottom.addWidget(self.lbl_date, 0) # Align left
+        bottom.addWidget(self.lbl_date, 0)
         bottom.addWidget(self.edit_date, 0)
-        bottom.addStretch(1) # Push everything to left
+        bottom.addStretch(1)
         
         if task.status == "FOLYAMATBAN":
             bottom.addWidget(chip, 0)
@@ -372,39 +343,59 @@ class TaskCard(QFrame):
 
         self.btn_delete.clicked.connect(self._on_delete)
 
+    def set_edit_mode(self, active: bool) -> None:
+        self.is_in_edit_mode = active
+        self.lbl_title.setVisible(not active)
+        self.edit_title.setVisible(active)
+        self.lbl_date.setVisible(not active)
+        self.edit_date.setVisible(active)
+
+        if not active:
+            # Visszaállítás eredeti állapotra, a .setStyleSheet("") pedig törli az esetleges piros hibajelzést
+            self.edit_title.setText(self.original_title)
+            self.edit_title.setStyleSheet("")
+            
+            self.edit_date.setText(self.original_due)
+            self.edit_date.setStyleSheet("")
+
+    def has_changes(self) -> bool:
+        t_val, d_val = self.get_changes()
+        return t_val != self.original_title or d_val != self.original_due
+
+    def get_changes(self) -> tuple[str, str]:
+        current_t = self.edit_title.text().strip()
+        current_d = self.edit_date.text().strip()
+        current_d = current_d.replace(".", "-").replace("/", "-")
+        if current_d.endswith("-"):
+            current_d = current_d[:-1]
+        return current_t, current_d
+
+    def is_date_valid(self) -> bool:
+        _, d_val = self.get_changes()
+        ok, _ = validate_ymd(d_val)
+        return ok
+
+    def apply_changes_optimistic(self) -> None:
+        t_val, d_val = self.get_changes()
+        self.original_title = t_val
+        self.original_due = d_val
+        
+        self.lbl_title.setText(t_val)
+        self.lbl_date.setText(d_val if d_val else "Nincs határidő")
+
+    def _on_text_changed(self) -> None:
+        if self.is_in_edit_mode:
+            self.content_changed.emit()
+
     def eventFilter(self, obj, event):
         if event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape:
             if obj is self.edit_title:
-                self._cancel_title_edit()
+                self.edit_title.setText(self.original_title)
                 return True
             elif obj is self.edit_date:
-                self._cancel_date_edit()
+                self.edit_date.setText(self.original_due)
                 return True
         return super().eventFilter(obj, event)
-
-    def _cancel_title_edit(self) -> None:
-        if not self.is_editing_title:
-            return
-        self.is_editing_title = False
-        self.edit_title.setText(self.lbl_title.text()) # Átveszi az aktuális értéket
-        self.lbl_title.setVisible(True)
-        self.edit_title.setVisible(False)
-        self.btn_edit_title.icon_type = "edit"
-        self.btn_edit_title.update()
-
-    def _cancel_date_edit(self) -> None:
-        if not self.is_editing_date:
-            return
-        self.is_editing_date = False
-        current_due = self.lbl_date.text()
-        if current_due == "Nincs határidő":
-            current_due = ""
-        self.edit_date.setText(current_due) # Átveszi az aktuális értéket
-        self.edit_date.setStyleSheet("background: #333333; color: #FFFFFF; border: 1px solid #555555; border-radius: 4px;") # Reset error style
-        self.lbl_date.setVisible(True)
-        self.edit_date.setVisible(False)
-        self.btn_edit_date.icon_type = "edit"
-        self.btn_edit_date.update()
 
     def _on_done(self) -> None:
         self.done_clicked.emit(self.task.id, self.lbl_title.text())
@@ -414,88 +405,3 @@ class TaskCard(QFrame):
 
     def _on_delete(self) -> None:
         self.delete_clicked.emit(self.task.id, self.lbl_title.text())
-    
-    def _on_title_edit_clicked(self) -> None:
-        if not self.is_editing_title:
-            # Start editing
-            self.is_editing_title = True
-            self.edit_title.setText(self.lbl_title.text()) # Átveszi a megjelenített szöveget
-            self.lbl_title.setVisible(False)
-            self.edit_title.setVisible(True)
-            self.edit_title.setFocus()
-            self.btn_edit_title.icon_type = "save"
-            self.btn_edit_title.update()
-        else:
-            # Save
-            self._on_title_save()
-
-    def _on_title_save(self) -> None:
-        if not self.is_editing_title:
-            return
-        new_title = self.edit_title.text().strip()
-        current_title = self.lbl_title.text()
-        
-        if new_title and new_title != current_title:
-             self.lbl_title.setText(new_title) # Optimista UI frissítés
-             
-             # Nincs határidő kezelése a mentéshez
-             current_due = self.lbl_date.text()
-             if current_due == "Nincs határidő" or current_due == "-":
-                 current_due = ""
-                 
-             self.update_requested.emit(self.task.id, new_title, current_due)
-        
-        self.is_editing_title = False
-        self.lbl_title.setVisible(True)
-        self.edit_title.setVisible(False)
-        self.btn_edit_title.icon_type = "edit"
-        self.btn_edit_title.update()
-
-    def _on_date_edit_clicked(self) -> None:
-        if not self.is_editing_date:
-            # Start editing
-            self.is_editing_date = True
-            current_due = self.lbl_date.text()
-            if current_due == "Nincs határidő" or current_due == "-":
-                current_due = ""
-            self.edit_date.setText(current_due) # Átveszi a megjelenített szöveget
-            self.lbl_date.setVisible(False)
-            self.edit_date.setVisible(True)
-            self.edit_date.setFocus()
-            self.btn_edit_date.icon_type = "save"
-            self.btn_edit_date.update()
-        else:
-            # Save
-            self._on_date_save()
-
-    def _on_date_save(self) -> None:
-        if not self.is_editing_date:
-            return
-        new_due = self.edit_date.text().strip()
-        
-        # Dátum gyors formázás: kicseréli a . és / jeleket kötőjelre
-        new_due = new_due.replace(".", "-").replace("/", "-")
-        if new_due.endswith("-"):
-            new_due = new_due[:-1]
-        self.edit_date.setText(new_due)
-        
-        ok, _ = validate_ymd(new_due)
-        if not ok:
-             self.edit_date.setStyleSheet("border: 1px solid red;")
-             return
-        
-        self.edit_date.setStyleSheet("background: #333333; color: #FFFFFF; border: 1px solid #555555; border-radius: 4px;")
-        
-        current_due = self.lbl_date.text()
-        if current_due == "Nincs határidő" or current_due == "-":
-            current_due = ""
-            
-        if new_due != current_due:
-             self.lbl_date.setText(new_due if new_due else "Nincs határidő") # Optimista UI frissítés
-             self.update_requested.emit(self.task.id, self.lbl_title.text(), new_due)
-
-        self.is_editing_date = False
-        self.lbl_date.setVisible(True)
-        self.edit_date.setVisible(False)
-        self.btn_edit_date.icon_type = "edit"
-        self.btn_edit_date.update()

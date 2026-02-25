@@ -74,10 +74,14 @@ class TaskHudWindow(QWidget):
         self._dragging = False
         self._expanded = False
         self._is_refreshing = False
+        
+        self._global_edit_mode = False
+        self._pending_saves = 0
+        self._save_errors = []
         self._jobs = []
 
         self._startup_banner_active = True
-        self._hotkey_banner_active = False  # ÚJ flag a hotkey bannerhez
+        self._hotkey_banner_active = False  
         self._last_counts_active: int | None = None
         self._last_counts_expired: int | None = None
         self._pending_status_text: str | None = None
@@ -131,10 +135,16 @@ class TaskHudWindow(QWidget):
         lr.setSpacing(10)
         self.btn_login = QPushButton("Bejelentkezés")
         self.btn_login.clicked.connect(self.start_login_mainthread)
-        self.lbl_hint = QLabel("Üdvözöllek, v1.04")
+        self.lbl_hint = QLabel("Üdv, v1.04")
         self.lbl_hint.setStyleSheet("color:#AAB3BB; font-size:11px;")
+        
+        self.btn_edit_all = QPushButton("Szerkesztés")
+        self.btn_edit_all.setVisible(False)
+        self.btn_edit_all.clicked.connect(self._on_edit_all_clicked)
+        
         lr.addWidget(self.btn_login, 0)
         lr.addWidget(self.lbl_hint, 1)
+        lr.addWidget(self.btn_edit_all, 0)
 
         self.add_toggle = QPushButton("+ Új feladat")
         self.add_panel = _AddTaskPanel()
@@ -279,10 +289,8 @@ class TaskHudWindow(QWidget):
         except Exception:
             pass
         
-        # MÓDOSÍTÁS: A banner után indítjuk a hotkey kijelzést, nem az alapállapotot
         QTimer.singleShot(2000, self._show_hotkey_info)
 
-    # ÚJ METÓDUS: Hotkey információ megjelenítése (2 másodpercre)
     def _show_hotkey_info(self) -> None:
         self._startup_banner_active = False
         self._hotkey_banner_active = True
@@ -294,7 +302,6 @@ class TaskHudWindow(QWidget):
             
         QTimer.singleShot(2000, self._hide_hotkey_info)
 
-    # ÚJ METÓDUS: Hotkey eltüntetése és az eredeti számlálók visszaállítása
     def _hide_hotkey_info(self) -> None:
         self._hotkey_banner_active = False
         
@@ -438,7 +445,6 @@ class TaskHudWindow(QWidget):
         self.add_toggle.setText("- Bezárás" if now else "+ Új feladat")
 
     def set_status_guarded(self, text: str, kind: str = "info") -> None:
-        # MÓDOSÍTÁS: Ha a startup banner VAGY a hotkey banner aktív, akkor csak elrakjuk későbbre
         if self._startup_banner_active or self._hotkey_banner_active:
             self._pending_status_text = text
             self._pending_status_kind = kind
@@ -465,6 +471,7 @@ class TaskHudWindow(QWidget):
             return
 
         self.set_status_guarded("Planner Widget  ✓", kind="ok")
+        self.btn_edit_all.setVisible(True)
         self._load_plans_from_graph()
         QTimer.singleShot(450, lambda: self.start_refresh(skip_intro=True))
 
@@ -473,6 +480,7 @@ class TaskHudWindow(QWidget):
         if not ok:
             return
 
+        self.btn_edit_all.setVisible(True)
         self._plan_items = plans_or_msg or []
         self._plan_by_label = {}
         labels = []
@@ -493,9 +501,9 @@ class TaskHudWindow(QWidget):
 
         display_name = backend.get_my_display_name()
         if display_name:
-            self.lbl_hint.setText(f"Üdvözöllek {display_name}, v1.03")
+            self.lbl_hint.setText(f"Üdv {display_name}, v1.04")
         else:
-            self.lbl_hint.setText("Üdvözöllek, v1.03")
+            self.lbl_hint.setText("Üdv, v1.04")
 
     def _on_plan_changed(self, plan_label: str) -> None:
         plan = self._plan_by_label.get(plan_label)
@@ -620,7 +628,7 @@ class TaskHudWindow(QWidget):
         self.start_refresh(skip_intro=True)
 
     def start_refresh(self, skip_intro: bool = True) -> None:
-        if self._is_refreshing:
+        if self._is_refreshing or self._global_edit_mode:
             return
         self._is_refreshing = True
         self.header.set_busy(True)
@@ -691,7 +699,6 @@ class TaskHudWindow(QWidget):
         self._last_counts_active = active
         self._last_counts_expired = expired
 
-        # MÓDOSÍTÁS: Ne frissítse a szöveget, amíg a bannerek futnak
         if self._startup_banner_active or self._hotkey_banner_active:
             return
 
@@ -765,7 +772,6 @@ class TaskHudWindow(QWidget):
             card.done_clicked.connect(self._on_done)
             card.reopen_clicked.connect(self._on_reopen)
             card.delete_clicked.connect(self._on_delete)
-            card.update_requested.connect(self._on_update_task)
             self.scroll_layout.insertWidget(self.scroll_layout.count() - 1, card)
 
         if done_tasks:
@@ -815,7 +821,6 @@ class TaskHudWindow(QWidget):
                 card.done_clicked.connect(self._on_done)
                 card.reopen_clicked.connect(self._on_reopen)
                 card.delete_clicked.connect(self._on_delete)
-                card.update_requested.connect(self._on_update_task)
                 self.scroll_layout.insertWidget(self.scroll_layout.count() - 1, card)
 
     def _on_done(self, task_id: str, title: str) -> None:
@@ -847,17 +852,109 @@ class TaskHudWindow(QWidget):
             if ok else self.set_status_guarded(msg or "Törlés sikertelen", kind="error")
         )
         self._jobs.append(job)
+
+    def _on_edit_all_clicked(self) -> None:
+        if not self._global_edit_mode:
+            self._global_edit_mode = True
+            self.btn_edit_all.setText("Mégse")
+            
+            for i in range(self.scroll_layout.count()):
+                item = self.scroll_layout.itemAt(i)
+                if item and item.widget() and isinstance(item.widget(), TaskCard):
+                    card = item.widget()
+                    if card.task.status == "FOLYAMATBAN":
+                        card.set_edit_mode(True)
+                        card.content_changed.connect(self._check_edit_changes, Qt.ConnectionType.UniqueConnection)
+        else:
+            if self.btn_edit_all.text() == "Mentés":
+                self._save_all_edits()
+            else:
+                self._global_edit_mode = False
+                self.btn_edit_all.setText("Szerkesztés")
+                for i in range(self.scroll_layout.count()):
+                    item = self.scroll_layout.itemAt(i)
+                    if item and item.widget() and isinstance(item.widget(), TaskCard):
+                        card = item.widget()
+                        if card.task.status == "FOLYAMATBAN":
+                            try:
+                                card.content_changed.disconnect(self._check_edit_changes)
+                            except Exception:
+                                pass
+                            card.set_edit_mode(False)
+
+    def _check_edit_changes(self) -> None:
+        if not self._global_edit_mode:
+            return
+        has_any = False
+        for i in range(self.scroll_layout.count()):
+            item = self.scroll_layout.itemAt(i)
+            if item and item.widget() and isinstance(item.widget(), TaskCard):
+                card = item.widget()
+                if card.task.status == "FOLYAMATBAN" and card.has_changes():
+                    has_any = True
+                    break
         
-    def _on_update_task(self, task_id: str, title: str, due: str) -> None:
+        if has_any:
+            self.btn_edit_all.setText("Mentés")
+        else:
+            self.btn_edit_all.setText("Mégse")
+
+    def _save_all_edits(self) -> None:
+        cards_to_save = []
+        for i in range(self.scroll_layout.count()):
+            item = self.scroll_layout.itemAt(i)
+            if item and item.widget() and isinstance(item.widget(), TaskCard):
+                card = item.widget()
+                if card.task.status == "FOLYAMATBAN" and card.has_changes():
+                    if not card.is_date_valid():
+                        self.set_status_guarded(f"Hibás dátum!", kind="error")
+                        card.edit_date.setStyleSheet("border: 1px solid red;")
+                        return
+                    cards_to_save.append(card)
+                    
+        if not cards_to_save:
+            self._on_edit_all_clicked()
+            return
+            
         if not self._startup_banner_active and not self._hotkey_banner_active:
             self.header.set_text("Mentés...")
-        # Késleltetjük a frissítést 1 másodperccel, hogy a Planner API is szinkronba kerüljön a háttérben
-        job = start_action(
-            "update_task_details", (task_id, title, due),
-            lambda ok, msg: QTimer.singleShot(1000, lambda: self.start_refresh(skip_intro=True))
-            if ok else self.set_status_guarded(msg or "Mentés sikertelen", kind="error")
-        )
-        self._jobs.append(job)
+        self.btn_edit_all.setDisabled(True)
+        
+        self._pending_saves = len(cards_to_save)
+        self._save_errors = []
+        
+        for card in cards_to_save:
+            t_val, d_val = card.get_changes()
+            job = start_action(
+                "update_task_details", (card.task.id, t_val, d_val),
+                lambda ok, msg, c=card: self._on_single_save_done(ok, msg, c)
+            )
+            self._jobs.append(job)
+
+    def _on_single_save_done(self, ok: bool, msg: str, card: TaskCard) -> None:
+        self._pending_saves -= 1
+        if ok:
+            card.apply_changes_optimistic()
+        else:
+            self._save_errors.append(msg or "Hiba")
+            
+        if self._pending_saves <= 0:
+            self.btn_edit_all.setDisabled(False)
+            if self._save_errors:
+                self.set_status_guarded("Egyes mentések sikertelenek", kind="error")
+            else:
+                self.set_status_guarded("Sikeres mentés", kind="ok")
+                self._global_edit_mode = False
+                self.btn_edit_all.setText("Szerkesztés")
+                for i in range(self.scroll_layout.count()):
+                    item = self.scroll_layout.itemAt(i)
+                    if item and item.widget() and isinstance(item.widget(), TaskCard):
+                        c = item.widget()
+                        try:
+                            c.content_changed.disconnect(self._check_edit_changes)
+                        except Exception:
+                            pass
+                QTimer.singleShot(1000, lambda: self.start_refresh(skip_intro=True))
 
 
 class _Header(QWidget):
@@ -1018,4 +1115,3 @@ class _AddTaskPanel(QFrame):
         elif which == "due":
             self.ed_due.setStyleSheet("border:1px solid #FF7B7B;")
             QTimer.singleShot(800, lambda: self.ed_due.setStyleSheet(""))
-
