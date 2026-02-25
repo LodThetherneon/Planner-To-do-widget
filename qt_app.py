@@ -4,6 +4,13 @@ import json
 import os
 from datetime import datetime
 
+try:
+    import keyboard  # type: ignore
+    _KEYBOARD_OK = True
+except Exception:
+    keyboard = None  # type: ignore
+    _KEYBOARD_OK = False
+
 from PyQt6.QtCore import Qt, QTimer, QSize, QPropertyAnimation, QEasingCurve, QPoint, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
@@ -29,6 +36,9 @@ from qt_widgets import TaskViewModel, validate_ymd, TaskCard, SeparatorLine, Min
 BUSY_GUARD_MS = 60000
 DEFAULTS_FILE = "planner_defaults.json"
 
+# --- ÚJ: globális hotkey beállítás itt ---
+GLOBAL_HOTKEY = "alt+w"
+
 
 def _load_defaults() -> dict:
     if not os.path.exists(DEFAULTS_FILE):
@@ -49,6 +59,9 @@ def _save_defaults(data: dict) -> None:
 
 
 class TaskHudWindow(QWidget):
+    # ÚJ: háttér-hookból signalon át jövünk vissza a Qt főszálba
+    hotkey_pressed = pyqtSignal()
+
     def __init__(self) -> None:
         super().__init__()
 
@@ -193,6 +206,46 @@ class TaskHudWindow(QWidget):
         self.start_refresh(skip_intro=False)
         QTimer.singleShot(300, self._load_plans_from_graph)
 
+        # --- ÚJ: hotkey bekötés ---
+        self.hotkey_pressed.connect(self.bring_to_front)
+        if _KEYBOARD_OK and keyboard is not None:
+            try:
+                keyboard.add_hotkey(GLOBAL_HOTKEY, lambda: self.hotkey_pressed.emit())
+                self.set_status_guarded(f"Hotkey: {GLOBAL_HOTKEY}", kind="info")
+            except Exception as e:
+                self.set_status_guarded(f"Hotkey hiba: {e}", kind="warn")
+        else:
+            self.set_status_guarded("Hotkey: 'keyboard' nincs telepítve", kind="warn")
+
+    # --- ÚJ: előtérbe hozás, de ne maradjon always-on-top ---
+    def bring_to_front(self) -> None:
+        self.showNormal()
+        self.show()
+
+        if ALWAYS_ON_TOP:
+            self.raise_()
+            self.activateWindow()
+            return
+
+        # Ideiglenesen tegyük topmost-ra, hogy biztosan előre jöjjön
+        try:
+            self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+            self.show()
+            self.raise_()
+            self.activateWindow()
+            QTimer.singleShot(250, self._restore_not_on_top)
+        except Exception:
+            # Ha bármi gond van, legalább próbáljuk előre hozni
+            self.raise_()
+            self.activateWindow()
+
+    def _restore_not_on_top(self) -> None:
+        try:
+            self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, False)
+            self.show()
+        except Exception:
+            pass
+
     def showEvent(self, event) -> None:
         super().showEvent(event)
         handle = self.windowHandle()
@@ -325,6 +378,13 @@ class TaskHudWindow(QWidget):
             self.close()
 
     def closeEvent(self, event) -> None:
+        # ÚJ: hotkey hook leállítása
+        try:
+            if _KEYBOARD_OK and keyboard is not None:
+                keyboard.unhook_all()
+        except Exception:
+            pass
+
         try:
             self._busy_guard.stop()
             self.timer.stop()
@@ -691,11 +751,8 @@ class TaskHudWindow(QWidget):
                 sort_val = 999999999
             else:
                 # -diff trükk:
-                # Jövőbeli dátum (pl. +100 nap) -> -100 (kicsi szám, elöl lesz)
-                # Ma (0 nap) -> 0
-                # Múltbeli dátum (pl. -500 nap) -> +500 (nagy szám, hátul lesz)
                 sort_val = -diff
-            
+
             return (1, sort_val, t.title.lower())
 
         tasks_sorted = sorted(tasks, key=sort_key)
