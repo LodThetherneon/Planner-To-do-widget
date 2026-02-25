@@ -135,8 +135,15 @@ class TaskHudWindow(QWidget):
         lr = QHBoxLayout(self.login_row)
         lr.setContentsMargins(0, 0, 0, 0)
         lr.setSpacing(10)
+        
         self.btn_login = QPushButton("Bejelentkezés")
         self.btn_login.clicked.connect(self.start_login_mainthread)
+        
+        self.btn_logout = QPushButton("Kijelentkezés")
+        self.btn_logout.clicked.connect(self.start_logout_mainthread)
+        self.btn_logout.setVisible(False)
+        self.btn_logout.setStyleSheet("background-color: #5A2E2E; border: 1px solid #7D4444;")
+        
         self.lbl_hint = QLabel("Üdv, v1.05")
         self.lbl_hint.setStyleSheet("color:#AAB3BB; font-size:11px;")
         
@@ -145,6 +152,7 @@ class TaskHudWindow(QWidget):
         self.btn_edit_all.clicked.connect(self._on_edit_all_clicked)
         
         lr.addWidget(self.btn_login, 0)
+        lr.addWidget(self.btn_logout, 0)
         lr.addWidget(self.lbl_hint, 1)
         lr.addWidget(self.btn_edit_all, 0)
 
@@ -208,8 +216,13 @@ class TaskHudWindow(QWidget):
 
         QTimer.singleShot(0, self._show_startup_banner)
 
-        self.start_refresh(skip_intro=False)
-        QTimer.singleShot(300, self._load_plans_from_graph)
+        # Indításkor megpróbálunk betölteni egy meglévő tokent
+        if backend.get_access_token_silent():
+            self._update_ui_for_logged_in()
+            self.start_refresh(skip_intro=False)
+            QTimer.singleShot(300, self._load_plans_from_graph)
+        else:
+            self._update_ui_for_logged_out()
 
         self.hotkey_pressed.connect(self.bring_to_front)
         if _KEYBOARD_OK and keyboard is not None:
@@ -487,6 +500,23 @@ class TaskHudWindow(QWidget):
             return
         self.header.set_status(text, kind=kind)
 
+    def _update_ui_for_logged_in(self) -> None:
+        self.btn_login.setVisible(False)
+        self.btn_logout.setVisible(True)
+        self.btn_edit_all.setVisible(True)
+        self.add_toggle.setVisible(True)
+
+    def _update_ui_for_logged_out(self) -> None:
+        self.btn_login.setVisible(True)
+        self.btn_logout.setVisible(False)
+        self.btn_edit_all.setVisible(False)
+        self.lbl_hint.setText("Kérlek jelentkezz be")
+        self._clear_task_widgets()
+        self._last_tasks = []
+        self.add_toggle.setVisible(False)
+        self.add_panel.setVisible(False)
+        self.header.set_text("Nincs bejelentkezve")
+
     def start_login_mainthread(self) -> None:
         self.btn_login.setDisabled(True)
         self.header.set_busy(True)
@@ -507,16 +537,23 @@ class TaskHudWindow(QWidget):
             return
 
         self.set_status_guarded("Planner Widget  ✓", kind="ok")
-        self.btn_edit_all.setVisible(True)
+        self._update_ui_for_logged_in()
         self._load_plans_from_graph()
         QTimer.singleShot(450, lambda: self.start_refresh(skip_intro=True))
+
+    def start_logout_mainthread(self) -> None:
+        self.set_status_guarded("Kijelentkezés...", kind="info")
+        if backend.logout():
+            self._update_ui_for_logged_out()
+            self.set_status_guarded("Sikeres kijelentkezés.", kind="ok")
+        else:
+            self.set_status_guarded("Hiba a kijelentkezés során.", kind="error")
 
     def _load_plans_from_graph(self) -> None:
         ok, plans_or_msg = backend.list_my_plans()
         if not ok:
             return
 
-        self.btn_edit_all.setVisible(True)
         self._plan_items = plans_or_msg or []
         self._plan_by_label = {}
         labels = []
@@ -690,6 +727,7 @@ class TaskHudWindow(QWidget):
         if isinstance(data, dict) and "error" in data:
             err = str(data.get("error") or "")
             if "Nincs bejelentkezve" in err:
+                self._update_ui_for_logged_out()
                 self.set_status_guarded("Jelentkezz be a frissítéshez.", kind="warn")
             else:
                 self.set_status_guarded(f"Hiba: {err}", kind="warn")
@@ -699,6 +737,8 @@ class TaskHudWindow(QWidget):
             self.set_status_guarded("Ismeretlen válasz", kind="warn")
             return
 
+        self._update_ui_for_logged_in()
+        
         tasks_vm: list[TaskViewModel] = []
         for t in data:
             tasks_vm.append(

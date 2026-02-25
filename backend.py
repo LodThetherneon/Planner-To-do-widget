@@ -141,6 +141,18 @@ def get_access_token_interactive():
         return None
 
 
+def logout():
+    """Kijelentkezés: törli a DPAPI titkosított token cache fájlt."""
+    if os.path.exists(CACHEFILE):
+        try:
+            os.remove(CACHEFILE)
+            return True
+        except Exception as e:
+            print(f"Logout hiba: {e}")
+            return False
+    return True
+
+
 def _planner_api_call(method: str, endpoint: str, payload=None, needs_etag=False):
     """Közös segédfüggvény a Planner API hívásokhoz. Jelentősen csökkenti a kód ismétlődését."""
     token = get_access_token_silent()
