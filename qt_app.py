@@ -14,7 +14,7 @@ except Exception:
 from PyQt6.QtCore import Qt, QTimer, QSize, QPropertyAnimation, QEasingCurve, QPoint, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
-    QComboBox, QScrollArea, QApplication
+    QComboBox, QScrollArea, QApplication, QSizePolicy, QStackedWidget
 )
 from PyQt6.QtWidgets import QStyleOptionSlider
 from PyQt6.QtGui import QMouseEvent
@@ -37,6 +37,11 @@ BUSY_GUARD_MS = 60000
 DEFAULTS_FILE = "planner_defaults.json"
 
 GLOBAL_HOTKEY = "alt+w"
+
+_QWIDGETSIZE_MAX = 16777215
+
+# Gombok fix szélessége pixelben
+_BTN_W = 110
 
 
 def _load_defaults() -> dict:
@@ -75,14 +80,14 @@ class TaskHudWindow(QWidget):
         self._expanded = False
         self._expanded_width = True
         self._is_refreshing = False
-        
+
         self._global_edit_mode = False
         self._pending_saves = 0
         self._save_errors = []
         self._jobs = []
 
         self._startup_banner_active = True
-        self._hotkey_banner_active = False  
+        self._hotkey_banner_active = False
         self._last_counts_active: int | None = None
         self._last_counts_expired: int | None = None
         self._pending_status_text: str | None = None
@@ -131,30 +136,41 @@ class TaskHudWindow(QWidget):
         self.content_layout.setContentsMargins(12, 0, 12, 12)
         self.content_layout.setSpacing(10)
 
+        # ── Login sor ──────────────────────────────────────────────────────────
         self.login_row = QWidget()
         lr = QHBoxLayout(self.login_row)
         lr.setContentsMargins(0, 0, 0, 0)
         lr.setSpacing(10)
-        
+
+        self._btn_stack = QStackedWidget()
+        self._btn_stack.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self._btn_stack.setFixedWidth(_BTN_W)
+
         self.btn_login = QPushButton("Bejelentkezés")
+        self.btn_login.setFixedWidth(_BTN_W)
         self.btn_login.clicked.connect(self.start_login_mainthread)
-        
+
         self.btn_logout = QPushButton("Kijelentkezés")
+        self.btn_logout.setFixedWidth(_BTN_W)
         self.btn_logout.clicked.connect(self.start_logout_mainthread)
-        self.btn_logout.setVisible(False)
         self.btn_logout.setStyleSheet("background-color: #5A2E2E; border: 1px solid #7D4444;")
-        
+
+        self._btn_stack.addWidget(self.btn_login)   # index 0
+        self._btn_stack.addWidget(self.btn_logout)  # index 1
+        self._btn_stack.setCurrentIndex(0)
+
         self.lbl_hint = QLabel("Üdv, v1.05")
         self.lbl_hint.setStyleSheet("color:#AAB3BB; font-size:11px;")
-        
+        self.lbl_hint.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+
         self.btn_edit_all = QPushButton("Szerkesztés")
         self.btn_edit_all.setVisible(False)
         self.btn_edit_all.clicked.connect(self._on_edit_all_clicked)
-        
-        lr.addWidget(self.btn_login, 0)
-        lr.addWidget(self.btn_logout, 0)
+
+        lr.addWidget(self._btn_stack, 0)
         lr.addWidget(self.lbl_hint, 1)
         lr.addWidget(self.btn_edit_all, 0)
+        # ──────────────────────────────────────────────────────────────────────
 
         self.add_toggle = QPushButton("+ Új feladat")
         self.add_panel = _AddTaskPanel()
@@ -233,6 +249,26 @@ class TaskHudWindow(QWidget):
         else:
             print("Hotkey: 'keyboard' nincs telepítve")
 
+    # ── Szélesség lock ─────────────────────────────────────────────────────────
+
+    def _expected_size(self) -> tuple[int, int]:
+        expected_h = WINDOW_MAX_HEIGHT if self._expanded else WINDOW_MIN_HEIGHT
+        if not getattr(self, "_expanded_width", True):
+            expected_h = WINDOW_MIN_HEIGHT
+        expected_w = WINDOW_WIDTH if getattr(self, "_expanded_width", True) else WINDOW_MIN_WIDTH
+        return expected_w, expected_h
+
+    def _unlock_width_constraints(self) -> None:
+        self.setMinimumWidth(0)
+        self.setMaximumWidth(_QWIDGETSIZE_MAX)
+
+    def _lock_width_constraints(self) -> None:
+        expected_w, _ = self._expected_size()
+        self.setMinimumWidth(expected_w)
+        self.setMaximumWidth(expected_w)
+
+    # ──────────────────────────────────────────────────────────────────────────
+
     def bring_to_front(self) -> None:
         self.showNormal()
         self.show()
@@ -281,26 +317,21 @@ class TaskHudWindow(QWidget):
             return
         if self.anim.state() == QPropertyAnimation.State.Running:
             return
-            
-        expected_h = WINDOW_MAX_HEIGHT if self._expanded else WINDOW_MIN_HEIGHT
-        if not getattr(self, '_expanded_width', True):
-            expected_h = WINDOW_MIN_HEIGHT
-            
-        expected_w = WINDOW_WIDTH if getattr(self, '_expanded_width', True) else WINDOW_MIN_WIDTH
+
+        expected_w, expected_h = self._expected_size()
+        self._lock_width_constraints()
+
         if self.width() != expected_w or self.height() != expected_h:
             self._correcting_size = True
             self.resize(expected_w, expected_h)
             self._correcting_size = False
 
     def _on_anim_finished(self) -> None:
-        expected_h = WINDOW_MAX_HEIGHT if self._expanded else WINDOW_MIN_HEIGHT
-        if not getattr(self, '_expanded_width', True):
-            expected_h = WINDOW_MIN_HEIGHT
-            
-        expected_w = WINDOW_WIDTH if getattr(self, '_expanded_width', True) else WINDOW_MIN_WIDTH
+        expected_w, expected_h = self._expected_size()
         self._correcting_size = True
         self.resize(expected_w, expected_h)
         self._correcting_size = False
+        self._lock_width_constraints()
 
     def _show_startup_banner(self) -> None:
         if not self._startup_banner_active:
@@ -313,23 +344,23 @@ class TaskHudWindow(QWidget):
             self.header.lbl.repaint()
         except Exception:
             pass
-        
+
         QTimer.singleShot(2000, self._show_hotkey_info)
 
     def _show_hotkey_info(self) -> None:
         self._startup_banner_active = False
         self._hotkey_banner_active = True
-        
+
         if _KEYBOARD_OK:
             self.header.set_status(f"Gyorsbillentyű: {GLOBAL_HOTKEY}", kind="info")
         else:
             self.header.set_status("Gyorsbillentyű funkció nem elérhető", kind="warn")
-            
+
         QTimer.singleShot(2000, self._hide_hotkey_info)
 
     def _hide_hotkey_info(self) -> None:
         self._hotkey_banner_active = False
-        
+
         if self._pending_status_text:
             self.header.set_status(self._pending_status_text, kind=self._pending_status_kind or "info")
             self._pending_status_text = None
@@ -442,9 +473,15 @@ class TaskHudWindow(QWidget):
 
     def _apply_expanded_width_state(self, expanded_width: bool, immediate: bool = False) -> None:
         self._expanded_width = expanded_width
+        
+        # ────────────────────────────────────────────────────────
+        # Jelezzük a headernek, hogy mini módban vagyunk-e
+        self.header.set_mini_mode(not expanded_width)
+        # ────────────────────────────────────────────────────────
+
         self.header.btn_h_toggle.icon_type = "left" if expanded_width else "right"
         self.header.btn_h_toggle.update()
-        
+
         self.header.btn_refresh.setVisible(expanded_width)
         self.header.btn_toggle.setVisible(expanded_width)
         self.header.btn_close.setVisible(expanded_width)
@@ -453,8 +490,8 @@ class TaskHudWindow(QWidget):
 
     def _apply_expanded_state(self, expanded: bool, immediate: bool = False) -> None:
         self._expanded = expanded
-        
-        if not getattr(self, '_expanded_width', True):
+
+        if not getattr(self, "_expanded_width", True):
             self.content.setVisible(False)
         else:
             self.content.setVisible(expanded)
@@ -462,16 +499,20 @@ class TaskHudWindow(QWidget):
         self.header.set_toggle_icon("▴" if expanded else "▾")
 
         target_h = WINDOW_MAX_HEIGHT if expanded else WINDOW_MIN_HEIGHT
-        if not getattr(self, '_expanded_width', True):
+        if not getattr(self, "_expanded_width", True):
             target_h = WINDOW_MIN_HEIGHT
-            
-        target_w = WINDOW_WIDTH if getattr(self, '_expanded_width', True) else WINDOW_MIN_WIDTH
+
+        target_w = WINDOW_WIDTH if getattr(self, "_expanded_width", True) else WINDOW_MIN_WIDTH
         target = QSize(target_w, target_h)
+
+        # Animáció/resize előtt feloldjuk a lock-ot
+        self._unlock_width_constraints()
 
         if immediate:
             if self.anim.state() == QPropertyAnimation.State.Running:
                 self.anim.stop()
             self.resize(target)
+            self._lock_width_constraints()
             return
 
         if self.anim.state() == QPropertyAnimation.State.Running:
@@ -501,14 +542,12 @@ class TaskHudWindow(QWidget):
         self.header.set_status(text, kind=kind)
 
     def _update_ui_for_logged_in(self) -> None:
-        self.btn_login.setVisible(False)
-        self.btn_logout.setVisible(True)
+        self._btn_stack.setCurrentIndex(1)   # Kijelentkezés gomb mutatása
         self.btn_edit_all.setVisible(True)
         self.add_toggle.setVisible(True)
 
     def _update_ui_for_logged_out(self) -> None:
-        self.btn_login.setVisible(True)
-        self.btn_logout.setVisible(False)
+        self._btn_stack.setCurrentIndex(0)   # Bejelentkezés gomb mutatása
         self.btn_edit_all.setVisible(False)
         self.lbl_hint.setText("Kérlek jelentkezz be")
         self._clear_task_widgets()
@@ -577,6 +616,9 @@ class TaskHudWindow(QWidget):
             self.lbl_hint.setText(f"Üdv {display_name}, v1.05")
         else:
             self.lbl_hint.setText("Üdv, v1.05")
+
+        if self.anim.state() != QPropertyAnimation.State.Running:
+            self._lock_width_constraints()
 
     def _on_plan_changed(self, plan_label: str) -> None:
         plan = self._plan_by_label.get(plan_label)
@@ -738,7 +780,7 @@ class TaskHudWindow(QWidget):
             return
 
         self._update_ui_for_logged_in()
-        
+
         tasks_vm: list[TaskViewModel] = []
         for t in data:
             tasks_vm.append(
@@ -933,7 +975,7 @@ class TaskHudWindow(QWidget):
         if not self._global_edit_mode:
             self._global_edit_mode = True
             self.btn_edit_all.setText("Mégse")
-            
+
             for i in range(self.scroll_layout.count()):
                 item = self.scroll_layout.itemAt(i)
                 if item and item.widget() and isinstance(item.widget(), TaskCard):
@@ -969,7 +1011,7 @@ class TaskHudWindow(QWidget):
                 if card.task.status == "FOLYAMATBAN" and card.has_changes():
                     has_any = True
                     break
-        
+
         if has_any:
             self.btn_edit_all.setText("Mentés")
         else:
@@ -987,18 +1029,18 @@ class TaskHudWindow(QWidget):
                         card.edit_date.setStyleSheet("border: 1px solid red;")
                         return
                     cards_to_save.append(card)
-                    
+
         if not cards_to_save:
             self._on_edit_all_clicked()
             return
-            
+
         if not self._startup_banner_active and not self._hotkey_banner_active:
             self.header.set_text("Mentés...")
         self.btn_edit_all.setDisabled(True)
-        
+
         self._pending_saves = len(cards_to_save)
         self._save_errors = []
-        
+
         for card in cards_to_save:
             t_val, d_val = card.get_changes()
             job = start_action(
@@ -1013,7 +1055,7 @@ class TaskHudWindow(QWidget):
             card.apply_changes_optimistic()
         else:
             self._save_errors.append(msg or "Hiba")
-            
+
         if self._pending_saves <= 0:
             self.btn_edit_all.setDisabled(False)
             if self._save_errors:
@@ -1056,6 +1098,11 @@ class _Header(QWidget):
         self.btn_refresh.setToolTip("Frissítés")
         self.btn_toggle.setToolTip("Kinyit/bezár")
         self.btn_close.setToolTip("Bezárás")
+        
+        # ÚJ: tároljuk az utolsó értékeket és a módot
+        self._last_active: int = 0
+        self._last_expired: int = 0
+        self._mini_mode: bool = False
 
         row = QHBoxLayout(self)
         row.setContentsMargins(14, 12, 10, 10)
@@ -1070,18 +1117,38 @@ class _Header(QWidget):
         self.btn_refresh.clicked.connect(self.refresh_clicked.emit)
         self.btn_toggle.clicked.connect(self.toggle_clicked.emit)
         self.btn_close.clicked.connect(self.close_clicked.emit)
+    
+    def set_mini_mode(self, mini: bool) -> None:
+        if self._mini_mode != mini:
+            self._mini_mode = mini
+            # Ha van tárolt adatunk, frissítsük a megjelenítést
+            self.set_counts(self._last_active, self._last_expired)
 
     def set_counts(self, active: int, expired: int) -> None:
-        active = int(active or 0)
-        expired = int(expired or 0)
+        self._last_active = int(active or 0)
+        self._last_expired = int(expired or 0)
+        
+        active_val = self._last_active
+        expired_val = self._last_expired
 
-        if expired > 0:
-            html = (
-                f"{active} <b>Feladat</b> | "
-                f"<span style='color:#FF5555; font-weight:800;'>{expired} Lejárt</span>"
-            )
+        if self._mini_mode:
+            # Rövid nézet: "5 / 2!"
+            if expired_val > 0:
+                html = (
+                    f"{active_val} / "
+                    f"<span style='color:#FF5555; font-weight:800;'>{expired_val}!</span>"
+                )
+            else:
+                html = f"{active_val} db"
         else:
-            html = f"{active} <b>Feladat</b>"
+            # Normál nézet
+            if expired_val > 0:
+                html = (
+                    f"{active_val} <b>Feladat</b> | "
+                    f"<span style='color:#FF5555; font-weight:800;'>{expired_val} Lejárt</span>"
+                )
+            else:
+                html = f"{active_val} <b>Feladat</b>"
 
         self.lbl.setStyleSheet("")
         self.lbl.setText(html)
