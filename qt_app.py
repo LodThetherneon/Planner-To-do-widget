@@ -814,6 +814,7 @@ class TaskHudWindow(QWidget):
                 card.done_clicked.connect(self._on_done)
                 card.reopen_clicked.connect(self._on_reopen)
                 card.delete_clicked.connect(self._on_delete)
+                card.update_requested.connect(self._on_update_task)
                 self.scroll_layout.insertWidget(self.scroll_layout.count() - 1, card)
 
     def _on_done(self, task_id: str, title: str) -> None:
@@ -843,6 +844,16 @@ class TaskHudWindow(QWidget):
             "delete_task", (task_id,),
             lambda ok, msg: self.start_refresh(skip_intro=True)
             if ok else self.set_status_guarded(msg or "Törlés sikertelen", kind="error")
+        )
+        self._jobs.append(job)
+        
+    def _on_update_task(self, task_id: str, title: str, due: str) -> None:
+        if not self._startup_banner_active and not self._hotkey_banner_active:
+            self.header.set_text("Mentés...")
+        job = start_action(
+            "update_task_details", (task_id, title, due),
+            lambda ok, msg: self.start_refresh(skip_intro=True)
+            if ok else self.set_status_guarded(msg or "Mentés sikertelen", kind="error")
         )
         self._jobs.append(job)
 
