@@ -36,7 +36,6 @@ from qt_widgets import TaskViewModel, validate_ymd, TaskCard, SeparatorLine, Min
 BUSY_GUARD_MS = 60000
 DEFAULTS_FILE = "planner_defaults.json"
 
-# --- ÚJ: globális hotkey beállítás itt ---
 GLOBAL_HOTKEY = "alt+w"
 
 
@@ -59,7 +58,6 @@ def _save_defaults(data: dict) -> None:
 
 
 class TaskHudWindow(QWidget):
-    # ÚJ: háttér-hookból signalon át jövünk vissza a Qt főszálba
     hotkey_pressed = pyqtSignal()
 
     def __init__(self) -> None:
@@ -79,16 +77,15 @@ class TaskHudWindow(QWidget):
         self._jobs = []
 
         self._startup_banner_active = True
+        self._hotkey_banner_active = False  # ÚJ flag a hotkey bannerhez
         self._last_counts_active: int | None = None
         self._last_counts_expired: int | None = None
         self._pending_status_text: str | None = None
         self._pending_status_kind: str | None = None
 
-        # Lapozáshoz szükséges változók
         self._last_tasks: list[TaskViewModel] = []
         self._completed_page = 1
 
-        # Guard flag a resizeEvent végtelen ciklus ellen
         self._correcting_size = False
 
         self._defaults = _load_defaults()
@@ -154,16 +151,11 @@ class TaskHudWindow(QWidget):
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-
-        # MÓDOSÍTÁS ITT: scrollbar policy megváltoztatása
         self.scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
-
         self.scroll.setFrameShape(QFrame.Shape.NoFrame)
-
         self.scroll.setAutoFillBackground(False)
         self.scroll.viewport().setAutoFillBackground(False)
         self.scroll.viewport().setStyleSheet("background: transparent;")
-
         self.scroll.setViewportMargins(0, 0, 10, 0)
 
         self.scroll_host = QWidget()
@@ -206,18 +198,15 @@ class TaskHudWindow(QWidget):
         self.start_refresh(skip_intro=False)
         QTimer.singleShot(300, self._load_plans_from_graph)
 
-        # --- ÚJ: hotkey bekötés ---
         self.hotkey_pressed.connect(self.bring_to_front)
         if _KEYBOARD_OK and keyboard is not None:
             try:
                 keyboard.add_hotkey(GLOBAL_HOTKEY, lambda: self.hotkey_pressed.emit())
-                self.set_status_guarded(f"Hotkey: {GLOBAL_HOTKEY}", kind="info")
             except Exception as e:
-                self.set_status_guarded(f"Hotkey hiba: {e}", kind="warn")
+                print(f"Hotkey hiba: {e}")
         else:
-            self.set_status_guarded("Hotkey: 'keyboard' nincs telepítve", kind="warn")
+            print("Hotkey: 'keyboard' nincs telepítve")
 
-    # --- ÚJ: előtérbe hozás, de ne maradjon always-on-top ---
     def bring_to_front(self) -> None:
         self.showNormal()
         self.show()
@@ -227,7 +216,6 @@ class TaskHudWindow(QWidget):
             self.activateWindow()
             return
 
-        # Ideiglenesen tegyük topmost-ra, hogy biztosan előre jöjjön
         try:
             self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
             self.show()
@@ -235,7 +223,6 @@ class TaskHudWindow(QWidget):
             self.activateWindow()
             QTimer.singleShot(250, self._restore_not_on_top)
         except Exception:
-            # Ha bármi gond van, legalább próbáljuk előre hozni
             self.raise_()
             self.activateWindow()
 
@@ -291,11 +278,26 @@ class TaskHudWindow(QWidget):
             self.header.lbl.repaint()
         except Exception:
             pass
-        QTimer.singleShot(2000, self._end_startup_banner)
+        
+        # MÓDOSÍTÁS: A banner után indítjuk a hotkey kijelzést, nem az alapállapotot
+        QTimer.singleShot(2000, self._show_hotkey_info)
 
-    def _end_startup_banner(self) -> None:
+    # ÚJ METÓDUS: Hotkey információ megjelenítése (2 másodpercre)
+    def _show_hotkey_info(self) -> None:
         self._startup_banner_active = False
+        self._hotkey_banner_active = True
+        
+        if _KEYBOARD_OK:
+            self.header.set_status(f"Gyorsbillentyű: {GLOBAL_HOTKEY}", kind="info")
+        else:
+            self.header.set_status("Gyorsbillentyű funkció nem elérhető", kind="warn")
+            
+        QTimer.singleShot(2000, self._hide_hotkey_info)
 
+    # ÚJ METÓDUS: Hotkey eltüntetése és az eredeti számlálók visszaállítása
+    def _hide_hotkey_info(self) -> None:
+        self._hotkey_banner_active = False
+        
         if self._pending_status_text:
             self.header.set_status(self._pending_status_text, kind=self._pending_status_kind or "info")
             self._pending_status_text = None
@@ -378,7 +380,6 @@ class TaskHudWindow(QWidget):
             self.close()
 
     def closeEvent(self, event) -> None:
-        # ÚJ: hotkey hook leállítása
         try:
             if _KEYBOARD_OK and keyboard is not None:
                 keyboard.unhook_all()
@@ -437,7 +438,8 @@ class TaskHudWindow(QWidget):
         self.add_toggle.setText("- Bezárás" if now else "+ Új feladat")
 
     def set_status_guarded(self, text: str, kind: str = "info") -> None:
-        if self._startup_banner_active:
+        # MÓDOSÍTÁS: Ha a startup banner VAGY a hotkey banner aktív, akkor csak elrakjuk későbbre
+        if self._startup_banner_active or self._hotkey_banner_active:
             self._pending_status_text = text
             self._pending_status_kind = kind
             return
@@ -623,7 +625,7 @@ class TaskHudWindow(QWidget):
         self._is_refreshing = True
         self.header.set_busy(True)
 
-        if not self._startup_banner_active:
+        if not self._startup_banner_active and not self._hotkey_banner_active:
             self.header.set_text("Frissítés...")
 
         self._busy_guard.start(BUSY_GUARD_MS)
@@ -689,7 +691,8 @@ class TaskHudWindow(QWidget):
         self._last_counts_active = active
         self._last_counts_expired = expired
 
-        if self._startup_banner_active:
+        # MÓDOSÍTÁS: Ne frissítse a szöveget, amíg a bannerek futnak
+        if self._startup_banner_active or self._hotkey_banner_active:
             return
 
         self.header.set_counts(active=active, expired=expired)
@@ -745,23 +748,18 @@ class TaskHudWindow(QWidget):
                 date_sort = dued.toordinal() if dued else 999999999
                 return (0, group, diff_sort, date_sort, t.title.lower())
 
-            # KESZ (Completed) feladatok új rendezése
             if diff == 9999:
-                # Dátum nélküliek a végére
                 sort_val = 999999999
             else:
-                # -diff trükk:
                 sort_val = -diff
 
             return (1, sort_val, t.title.lower())
 
         tasks_sorted = sorted(tasks, key=sort_key)
 
-        # Feladatok szétválasztása folyamatban lévőkre és kész feladatokra
         active_tasks = [t for t in tasks_sorted if t.status == "FOLYAMATBAN"]
         done_tasks = [t for t in tasks_sorted if t.status == "KESZ"]
 
-        # Folyamatban lévő feladatok megjelenítése (összes)
         for t in active_tasks:
             card = TaskCard(t)
             card.done_clicked.connect(self._on_done)
@@ -769,7 +767,6 @@ class TaskHudWindow(QWidget):
             card.delete_clicked.connect(self._on_delete)
             self.scroll_layout.insertWidget(self.scroll_layout.count() - 1, card)
 
-        # Kész feladatok megjelenítése lapozva (max 12 oldalanként)
         if done_tasks:
             max_pages = max(1, (len(done_tasks) + 11) // 12)
             if self._completed_page > max_pages:
@@ -779,7 +776,6 @@ class TaskHudWindow(QWidget):
 
             self.scroll_layout.insertWidget(self.scroll_layout.count() - 1, SeparatorLine())
 
-            # Lapozó vezérlő ÁTHELYEZVE IDE (ha több mint 1 oldalnyi kész feladat van)
             if max_pages > 1:
                 pag_widget = QWidget()
                 pag_widget.setStyleSheet("background: transparent; border: 0px;")
@@ -821,7 +817,7 @@ class TaskHudWindow(QWidget):
                 self.scroll_layout.insertWidget(self.scroll_layout.count() - 1, card)
 
     def _on_done(self, task_id: str, title: str) -> None:
-        if not self._startup_banner_active:
+        if not self._startup_banner_active and not self._hotkey_banner_active:
             self.header.set_text("Frissítés...")
         job = start_action(
             "complete_task", (task_id, title),
@@ -831,7 +827,7 @@ class TaskHudWindow(QWidget):
         self._jobs.append(job)
 
     def _on_reopen(self, task_id: str, title: str) -> None:
-        if not self._startup_banner_active:
+        if not self._startup_banner_active and not self._hotkey_banner_active:
             self.header.set_text("Frissítés...")
         job = start_action(
             "reopen_task", (task_id, title),
@@ -841,7 +837,7 @@ class TaskHudWindow(QWidget):
         self._jobs.append(job)
 
     def _on_delete(self, task_id: str, title: str) -> None:
-        if not self._startup_banner_active:
+        if not self._startup_banner_active and not self._hotkey_banner_active:
             self.header.set_text("Törlés...")
         job = start_action(
             "delete_task", (task_id,),
