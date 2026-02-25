@@ -263,6 +263,53 @@ def update_task_completion(task_id, percent):
         return False, f"Update hiba: {e}"
 
 
+def update_task_details(task_id, new_title=None, new_due_date=None):
+    token = get_access_token_silent()
+    if not token:
+        return False, "Nincs bejelentkezve"
+
+    url = f"https://graph.microsoft.com/v1.0/planner/tasks/{task_id}"
+    
+    # First get ETag
+    headers = {"Authorization": f"Bearer {token}", "Cache-Control": "no-cache"}
+    try:
+        res = session.get(url, headers=headers, timeout=15)
+        if res.status_code != 200:
+             return False, f"ETag error: {res.status_code}"
+        
+        etag = res.json().get("@odata.etag")
+        if not etag:
+            return False, "Missing ETag"
+        
+        patch_headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "If-Match": etag,
+            "Prefer": "return=representation"
+        }
+        
+        payload = {}
+        if new_title is not None:
+            payload["title"] = new_title
+        if new_due_date is not None:
+            if new_due_date == "Nincs határidő" or not new_due_date:
+                payload["dueDateTime"] = None
+            else:
+                 # Validate format YYYY-MM-DD
+                 payload["dueDateTime"] = f"{new_due_date}T12:00:00Z"
+        
+        if not payload:
+             return True, "No changes"
+
+        response = session.patch(url, headers=patch_headers, json=payload, timeout=15)
+        if response.status_code in (200, 204):
+            return True, ""
+        return False, f"Update failed: {response.status_code} - {response.text}"
+
+    except Exception as e:
+        return False, f"Exception: {e}"
+
+
 def complete_task(task_id, *args):
     return update_task_completion(task_id, 100)
 
