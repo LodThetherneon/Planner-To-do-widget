@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import QStyle
 import backend
 
 from ui_config import (
-    REFRESH_RATE_SECONDS, WINDOW_WIDTH, WINDOW_MAX_HEIGHT, WINDOW_MIN_HEIGHT,
+    REFRESH_RATE_SECONDS, WINDOW_WIDTH, WINDOW_MIN_WIDTH, WINDOW_MAX_HEIGHT, WINDOW_MIN_HEIGHT,
     ANIM_DURATION_MS, ALWAYS_ON_TOP,
     STARTSOUND, COMPLETESOUND, REOPENSOUND, today_ymd
 )
@@ -73,6 +73,7 @@ class TaskHudWindow(QWidget):
         self._drag_start_global: QPoint | None = None
         self._dragging = False
         self._expanded = False
+        self._expanded_width = True
         self._is_refreshing = False
         
         self._global_edit_mode = False
@@ -120,6 +121,7 @@ class TaskHudWindow(QWidget):
 
         self.header.installEventFilter(self)
         self.header.lbl.installEventFilter(self)
+        self.header.btn_h_toggle.installEventFilter(self)
         self.header.btn_refresh.installEventFilter(self)
         self.header.btn_toggle.installEventFilter(self)
         self.header.btn_close.installEventFilter(self)
@@ -192,6 +194,7 @@ class TaskHudWindow(QWidget):
         self.anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         self.anim.finished.connect(self._on_anim_finished)
 
+        self.header.h_toggle_clicked.connect(self.toggle_width)
         self.header.refresh_clicked.connect(lambda: self.start_refresh(skip_intro=False))
         self.header.toggle_clicked.connect(self.toggle_expand)
         self.header.close_clicked.connect(self._close_requested)
@@ -265,16 +268,25 @@ class TaskHudWindow(QWidget):
             return
         if self.anim.state() == QPropertyAnimation.State.Running:
             return
+            
         expected_h = WINDOW_MAX_HEIGHT if self._expanded else WINDOW_MIN_HEIGHT
-        if self.width() != WINDOW_WIDTH or self.height() != expected_h:
+        if not getattr(self, '_expanded_width', True):
+            expected_h = WINDOW_MIN_HEIGHT
+            
+        expected_w = WINDOW_WIDTH if getattr(self, '_expanded_width', True) else WINDOW_MIN_WIDTH
+        if self.width() != expected_w or self.height() != expected_h:
             self._correcting_size = True
-            self.resize(WINDOW_WIDTH, expected_h)
+            self.resize(expected_w, expected_h)
             self._correcting_size = False
 
     def _on_anim_finished(self) -> None:
         expected_h = WINDOW_MAX_HEIGHT if self._expanded else WINDOW_MIN_HEIGHT
+        if not getattr(self, '_expanded_width', True):
+            expected_h = WINDOW_MIN_HEIGHT
+            
+        expected_w = WINDOW_WIDTH if getattr(self, '_expanded_width', True) else WINDOW_MIN_WIDTH
         self._correcting_size = True
-        self.resize(WINDOW_WIDTH, expected_h)
+        self.resize(expected_w, expected_h)
         self._correcting_size = False
 
     def _show_startup_banner(self) -> None:
@@ -318,6 +330,7 @@ class TaskHudWindow(QWidget):
         is_header_area = (
             (obj is self.header)
             or (obj is self.header.lbl)
+            or (obj is self.header.btn_h_toggle)
             or (obj is self.header.btn_refresh)
             or (obj is self.header.btn_toggle)
             or (obj is self.header.btn_close)
@@ -411,13 +424,36 @@ class TaskHudWindow(QWidget):
         margin = 12
         self.move(geo.x() + geo.width() - self.width() - margin, geo.y() + margin)
 
+    def toggle_width(self) -> None:
+        self._apply_expanded_width_state(not self._expanded_width, immediate=False)
+
+    def _apply_expanded_width_state(self, expanded_width: bool, immediate: bool = False) -> None:
+        self._expanded_width = expanded_width
+        self.header.btn_h_toggle.icon_type = "left" if expanded_width else "right"
+        self.header.btn_h_toggle.update()
+        
+        self.header.btn_refresh.setVisible(expanded_width)
+        self.header.btn_toggle.setVisible(expanded_width)
+        self.header.btn_close.setVisible(expanded_width)
+
+        self._apply_expanded_state(self._expanded, immediate=immediate)
+
     def _apply_expanded_state(self, expanded: bool, immediate: bool = False) -> None:
         self._expanded = expanded
-        self.content.setVisible(expanded)
+        
+        if not getattr(self, '_expanded_width', True):
+            self.content.setVisible(False)
+        else:
+            self.content.setVisible(expanded)
+
         self.header.set_toggle_icon("▴" if expanded else "▾")
 
         target_h = WINDOW_MAX_HEIGHT if expanded else WINDOW_MIN_HEIGHT
-        target = QSize(WINDOW_WIDTH, target_h)
+        if not getattr(self, '_expanded_width', True):
+            target_h = WINDOW_MIN_HEIGHT
+            
+        target_w = WINDOW_WIDTH if getattr(self, '_expanded_width', True) else WINDOW_MIN_WIDTH
+        target = QSize(target_w, target_h)
 
         if immediate:
             if self.anim.state() == QPropertyAnimation.State.Running:
@@ -961,6 +997,7 @@ class _Header(QWidget):
     refresh_clicked = pyqtSignal()
     toggle_clicked = pyqtSignal()
     close_clicked = pyqtSignal()
+    h_toggle_clicked = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -969,11 +1006,13 @@ class _Header(QWidget):
         self.lbl = QLabel("Betöltés...")
         self.lbl.setTextFormat(Qt.TextFormat.RichText)
 
+        self.btn_h_toggle = MinimalButton("left")
         self.btn_refresh = MinimalButton("refresh")
         self.btn_toggle = MinimalButton("down")
         self.btn_close = MinimalButton("close")
         self.btn_close.setObjectName("CloseBtn")
 
+        self.btn_h_toggle.setToolTip("Oldalpanel összecsukása/kinyitása")
         self.btn_refresh.setToolTip("Frissítés")
         self.btn_toggle.setToolTip("Kinyit/bezár")
         self.btn_close.setToolTip("Bezárás")
@@ -982,10 +1021,12 @@ class _Header(QWidget):
         row.setContentsMargins(14, 12, 10, 10)
         row.setSpacing(8)
         row.addWidget(self.lbl, 1)
+        row.addWidget(self.btn_h_toggle, 0)
         row.addWidget(self.btn_refresh, 0)
         row.addWidget(self.btn_toggle, 0)
         row.addWidget(self.btn_close, 0)
 
+        self.btn_h_toggle.clicked.connect(self.h_toggle_clicked.emit)
         self.btn_refresh.clicked.connect(self.refresh_clicked.emit)
         self.btn_toggle.clicked.connect(self.toggle_clicked.emit)
         self.btn_close.clicked.connect(self.close_clicked.emit)
