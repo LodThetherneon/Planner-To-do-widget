@@ -1018,3 +1018,4 @@ class _AddTaskPanel(QFrame):
         elif which == "due":
             self.ed_due.setStyleSheet("border:1px solid #FF7B7B;")
             QTimer.singleShot(800, lambda: self.ed_due.setStyleSheet(""))
+
