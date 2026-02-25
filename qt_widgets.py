@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, date
 
-from PyQt6.QtCore import Qt, pyqtSignal, QSize, QPointF, QRectF
+from PyQt6.QtCore import Qt, pyqtSignal, QSize, QPointF, QRectF, QEvent
 from PyQt6.QtGui import QPainter, QPen, QColor, QPainterPath, QFont
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QLabel, QHBoxLayout, QVBoxLayout, QPushButton,
@@ -277,6 +277,7 @@ class TaskCard(QFrame):
         self.edit_title.setText(task.title)
         self.edit_title.setVisible(False)
         self.edit_title.returnPressed.connect(self._on_title_save)
+        self.edit_title.installEventFilter(self) # Install event filter for Esc key
 
         self.btn_delete = MinimalButton("trash", icon_size=28)
         self.btn_delete.setToolTip("Törlés")
@@ -297,8 +298,6 @@ class TaskCard(QFrame):
             self.btn_edit_title.setToolTip("Név szerkesztése")
             self.btn_edit_title.clicked.connect(self._on_title_edit_clicked)
             # Add to layout right after title (will align right if title is short, or end of line)
-            # Since we want it at the end of the text, but QLabel takes full width in this layout...
-            # The simple QHBoxLayout puts it to the right of the label rect.
             top.addWidget(self.btn_edit_title, 0, Qt.AlignmentFlag.AlignTop)
 
         top.addWidget(self.btn_delete, 0, Qt.AlignmentFlag.AlignTop)
@@ -322,11 +321,12 @@ class TaskCard(QFrame):
         
         # Date editor (hidden by default)
         self.edit_date = QLineEdit()
-        self.edit_date.setPlaceholderText("YYYY-MM-DD")
+        self.edit_date.setPlaceholderText("ÉÉÉÉ-HH-NN") # Updated exactly like new task
         self.edit_date.setText(task.due if task.due != "Nincs határidő" else "")
         self.edit_date.setVisible(False)
         self.edit_date.setFixedWidth(100)
         self.edit_date.returnPressed.connect(self._on_date_save)
+        self.edit_date.installEventFilter(self) # Install event filter for Esc key
 
         pr_txt, pr_col = _prio_label_color(task.priority)
 
@@ -371,6 +371,37 @@ class TaskCard(QFrame):
         root.addWidget(bottom_row_widget)
 
         self.btn_delete.clicked.connect(self._on_delete)
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape:
+            if obj is self.edit_title:
+                self._cancel_title_edit()
+                return True
+            elif obj is self.edit_date:
+                self._cancel_date_edit()
+                return True
+        return super().eventFilter(obj, event)
+
+    def _cancel_title_edit(self) -> None:
+        if not self.is_editing_title:
+            return
+        self.is_editing_title = False
+        self.edit_title.setText(self.task.title) # revert changes
+        self.lbl_title.setVisible(True)
+        self.edit_title.setVisible(False)
+        self.btn_edit_title.icon_type = "edit"
+        self.btn_edit_title.update()
+
+    def _cancel_date_edit(self) -> None:
+        if not self.is_editing_date:
+            return
+        self.is_editing_date = False
+        self.edit_date.setText(self.task.due if self.task.due != "Nincs határidő" else "") # revert changes
+        self.edit_date.setStyleSheet("background: #333333; color: #FFFFFF; border: 1px solid #555555; border-radius: 4px;") # Reset error style
+        self.lbl_date.setVisible(True)
+        self.edit_date.setVisible(False)
+        self.btn_edit_date.icon_type = "edit"
+        self.btn_edit_date.update()
 
     def _on_done(self) -> None:
         self.done_clicked.emit(self.task.id, self.task.title)
