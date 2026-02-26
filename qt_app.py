@@ -11,7 +11,7 @@ except Exception:
     keyboard = None  # type: ignore
     _KEYBOARD_OK = False
 
-from PyQt6.QtCore import Qt, QTimer, QSize, QPropertyAnimation, QEasingCurve, QPoint, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, QSize, QPropertyAnimation, QEasingCurve, QPoint, pyqtSignal, QRect
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
     QComboBox, QScrollArea, QApplication, QSizePolicy, QStackedWidget
@@ -97,6 +97,10 @@ class TaskHudWindow(QWidget):
         self._completed_page = 1
 
         self._correcting_size = False
+        
+        # Opcionális, bár a geometry animáció már önmagában kezeli:
+        self._anim_right_edge: int | None = None
+        self._anim_y_edge: int | None = None
 
         self._defaults = _load_defaults()
         self._plan_items: list[dict] = []
@@ -213,7 +217,8 @@ class TaskHudWindow(QWidget):
         self.resize(WINDOW_WIDTH, WINDOW_MIN_HEIGHT)
         self._move_to_top_right()
 
-        self.anim = QPropertyAnimation(self, b"size")
+        # ÚJ: SIZE helyett GEOMETRY animálása, így rögzítjük az Y-t és az X-et.
+        self.anim = QPropertyAnimation(self, b"geometry")
         self.anim.setDuration(ANIM_DURATION_MS)
         self.anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         self.anim.finished.connect(self._on_anim_finished)
@@ -233,7 +238,6 @@ class TaskHudWindow(QWidget):
 
         QTimer.singleShot(0, self._show_startup_banner)
 
-        # Indításkor megpróbálunk betölteni egy meglévő tokent
         if backend.get_access_token_silent():
             self._update_ui_for_logged_in()
             self.start_refresh(skip_intro=False)
@@ -260,17 +264,12 @@ class TaskHudWindow(QWidget):
         if getattr(self, "_expanded_width", True):
             expected_w = WINDOW_WIDTH
         else:
-            # Ha össze van csukva, ellenőrizzük a fejlécszöveg méretét
             self.header.lbl.adjustSize()
-            
-            # Kiszámoljuk pontosan a szükséges szélességet:
-            # root layout margók (bal 10 + jobb 10 = 20) + header layout margók (bal 14 + jobb 10 = 24) + spacing (8) = 52
             margins_and_spacing = 52
             lbl_w = self.header.lbl.sizeHint().width()
             btn_w = self.header.btn_h_toggle.sizeHint().width()
             needed_w = margins_and_spacing + lbl_w + btn_w
-            
-            # Felveheti a szöveghez szükséges méretet, de minimum a fix szélességet
+
             expected_w = max(WINDOW_MIN_WIDTH, needed_w)
 
         return expected_w, expected_h
@@ -278,21 +277,40 @@ class TaskHudWindow(QWidget):
     def _unlock_width_constraints(self) -> None:
         self.setMinimumWidth(0)
         self.setMaximumWidth(_QWIDGETSIZE_MAX)
+        self.setMinimumHeight(0)
+        self.setMaximumHeight(_QWIDGETSIZE_MAX)
 
     def _lock_width_constraints(self) -> None:
         expected_w, _ = self._expected_size()
         self.setMinimumWidth(expected_w)
         self.setMaximumWidth(expected_w)
+        
+        # opcionálisan rögzíthetjük a magasságot is lock-olt állapotban
+        if not self._expanded:
+            self.setMinimumHeight(WINDOW_MIN_HEIGHT)
+            self.setMaximumHeight(WINDOW_MIN_HEIGHT)
+
+    def _right_edge_x(self) -> int:
+        return int(self.x() + self.width())
+
+    def _keep_right_edge(self, right_edge_x: int, new_width: int, y_pos: int) -> None:
+        self.move(int(right_edge_x - new_width), int(y_pos))
 
     def _adjust_mini_size_if_needed(self) -> None:
-        """Dinamikusan szélesíti az ablakot, ha új, hosszú szöveg jön be mini módban."""
         if not getattr(self, "_expanded_width", True):
             if self.anim.state() == QPropertyAnimation.State.Running:
                 return
+
+            right_edge = self._right_edge_x()
+            current_y = self.y()
+
             self._correcting_size = True
             expected_w, expected_h = self._expected_size()
             self._unlock_width_constraints()
-            self.resize(expected_w, expected_h)
+            
+            # Méret és pozíció azonnali frissítése egyszerre
+            self.setGeometry(right_edge - expected_w, current_y, expected_w, expected_h)
+            
             self._lock_width_constraints()
             self._correcting_size = False
 
@@ -347,20 +365,31 @@ class TaskHudWindow(QWidget):
         if self.anim.state() == QPropertyAnimation.State.Running:
             return
 
+        right_edge = self._right_edge_x()
+        current_y = self.y()
+
         expected_w, expected_h = self._expected_size()
         self._lock_width_constraints()
 
         if self.width() != expected_w or self.height() != expected_h:
             self._correcting_size = True
-            self.resize(expected_w, expected_h)
+            self.setGeometry(right_edge - expected_w, current_y, expected_w, expected_h)
             self._correcting_size = False
 
     def _on_anim_finished(self) -> None:
         expected_w, expected_h = self._expected_size()
         self._correcting_size = True
-        self.resize(expected_w, expected_h)
+        
+        # Végső méretezés geometry beállítással, garantálva az Y-t
+        if self._anim_right_edge is not None and self._anim_y_edge is not None:
+            self.setGeometry(self._anim_right_edge - expected_w, self._anim_y_edge, expected_w, expected_h)
+        else:
+            self.resize(expected_w, expected_h)
+            
         self._correcting_size = False
         self._lock_width_constraints()
+        self._anim_right_edge = None
+        self._anim_y_edge = None
 
     def _show_startup_banner(self) -> None:
         if not self._startup_banner_active:
@@ -529,24 +558,33 @@ class TaskHudWindow(QWidget):
 
         self.header.set_toggle_icon("▴" if expanded else "▾")
 
-        # Dinamikus célméret számolása hardkódolt értékek helyett!
         target_w, target_h = self._expected_size()
-        target = QSize(target_w, target_h)
-
-        # Animáció/resize előtt feloldjuk a lock-ot
+        
         self._unlock_width_constraints()
+
+        right_edge = self._right_edge_x()
+        current_y = self.y()
 
         if immediate:
             if self.anim.state() == QPropertyAnimation.State.Running:
                 self.anim.stop()
-            self.resize(target)
+            self.setGeometry(right_edge - target_w, current_y, target_w, target_h)
             self._lock_width_constraints()
             return
 
         if self.anim.state() == QPropertyAnimation.State.Running:
             self.anim.stop()
-        self.anim.setStartValue(self.size())
-        self.anim.setEndValue(target)
+
+        self._anim_right_edge = right_edge
+        self._anim_y_edge = current_y
+
+        # GEOMETRY ANIMÁLÁSA: (X, Y, Width, Height)
+        # Itt határozzuk meg pontosan az ablak animáció alatti végpozícióját.
+        start_rect = self.geometry()
+        end_rect = QRect(right_edge - target_w, current_y, target_w, target_h)
+
+        self.anim.setStartValue(start_rect)
+        self.anim.setEndValue(end_rect)
         self.anim.start()
 
     def toggle_expand(self) -> None:
@@ -1108,7 +1146,7 @@ class _Header(QWidget):
     toggle_clicked = pyqtSignal()
     close_clicked = pyqtSignal()
     h_toggle_clicked = pyqtSignal()
-    text_changed = pyqtSignal()  # ÚJ: Jelez a szülőnek, ha változott a szöveg
+    text_changed = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -1116,6 +1154,8 @@ class _Header(QWidget):
 
         self.lbl = QLabel("Betöltés...")
         self.lbl.setTextFormat(Qt.TextFormat.RichText)
+
+        self.lbl.setWordWrap(False)
 
         self.btn_h_toggle = MinimalButton("left")
         self.btn_refresh = MinimalButton("refresh")
@@ -1164,12 +1204,12 @@ class _Header(QWidget):
 
         self.lbl.setStyleSheet("")
         self.lbl.setText(html)
-        self.text_changed.emit()  # Frissült a szöveg
+        self.text_changed.emit()
 
     def set_text(self, text: str) -> None:
         self.lbl.setStyleSheet("")
         self.lbl.setText(text)
-        self.text_changed.emit()  # Frissült a szöveg
+        self.text_changed.emit()
 
     def set_toggle_icon(self, txt: str) -> None:
         self.btn_toggle.icon_type = "up" if txt == "▴" else "down"
@@ -1188,7 +1228,7 @@ class _Header(QWidget):
         else:
             self.lbl.setStyleSheet("color:#EAEAEA; font-weight:700;")
         self.lbl.setText(text)
-        self.text_changed.emit()  # Frissült a szöveg
+        self.text_changed.emit()
 
 
 class _AddTaskPanel(QFrame):
