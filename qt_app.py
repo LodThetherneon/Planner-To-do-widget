@@ -222,7 +222,6 @@ class TaskHudWindow(QWidget):
         self.header.refresh_clicked.connect(lambda: self.start_refresh(skip_intro=False))
         self.header.toggle_clicked.connect(self.toggle_expand)
         self.header.close_clicked.connect(self._close_requested)
-        # Új: rácsatlakozunk a szövegváltozásra, hogy igazítsuk a méretet ha kell
         self.header.text_changed.connect(self._adjust_mini_size_if_needed)
 
         self._apply_expanded_state(False, immediate=True)
@@ -263,7 +262,14 @@ class TaskHudWindow(QWidget):
         else:
             # Ha össze van csukva, ellenőrizzük a fejlécszöveg méretét
             self.header.lbl.adjustSize()
-            needed_w = self.header.sizeHint().width()
+            
+            # Kiszámoljuk pontosan a szükséges szélességet:
+            # root layout margók (bal 10 + jobb 10 = 20) + header layout margók (bal 14 + jobb 10 = 24) + spacing (8) = 52
+            margins_and_spacing = 52
+            lbl_w = self.header.lbl.sizeHint().width()
+            btn_w = self.header.btn_h_toggle.sizeHint().width()
+            needed_w = margins_and_spacing + lbl_w + btn_w
+            
             # Felveheti a szöveghez szükséges méretet, de minimum a fix szélességet
             expected_w = max(WINDOW_MIN_WIDTH, needed_w)
 
