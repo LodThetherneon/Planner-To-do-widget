@@ -1241,32 +1241,6 @@ class _Header(QWidget):
         self.lbl.setText(text)
         self.text_changed.emit()
 
-    def set_text(self, text: str) -> None:
-        self.lbl.setStyleSheet("")
-        # Csomagoljuk div-be fix line-height-tal
-        self.lbl.setText(f"<div style='line-height:28px;'>{text}</div>")
-        self.text_changed.emit()
-
-    def set_toggle_icon(self, txt: str) -> None:
-        self.btn_toggle.icon_type = "up" if txt == "▴" else "down"
-        self.btn_toggle.update()
-
-    def set_busy(self, busy: bool) -> None:
-        self.btn_refresh.setDisabled(busy)
-
-    def set_status(self, text: str, kind: str = "info") -> None:
-        if kind == "error":
-            self.lbl.setStyleSheet("color:#FF7B7B; font-weight:700;")
-        elif kind == "warn":
-            self.lbl.setStyleSheet("color:#FFB86B; font-weight:700;")
-        elif kind == "ok":
-            self.lbl.setStyleSheet("color:#9BE59B; font-weight:700;")
-        else:
-            self.lbl.setStyleSheet("color:#EAEAEA; font-weight:700;")
-        self.lbl.setText(f"<div style='line-height:28px;'>{text}</div>")
-        self.text_changed.emit()
-
-
 
 class _AddTaskPanel(QFrame):
     add_clicked = pyqtSignal(str, str)
@@ -1355,3 +1329,4 @@ class _AddTaskPanel(QFrame):
         elif which == "due":
             self.ed_due.setStyleSheet("border:1px solid #FF7B7B;")
             QTimer.singleShot(800, lambda: self.ed_due.setStyleSheet(""))
+
