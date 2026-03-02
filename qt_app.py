@@ -14,7 +14,12 @@ except Exception:
 
 try:
     from pypdf import PdfReader, PdfWriter  # type: ignore
-    from pypdf.generic import BooleanObject, NameObject
+    try:
+        # Preferált (újabb pypdf verziókban gyakran így is elérhető)
+        from pypdf import BooleanObject, NameObject  # type: ignore
+    except Exception:
+        # Fallback: régebbi / IDE-linter eltérés esetén
+        from pypdf.generic import BooleanObject, NameObject  # type: ignore
     _PYPDF_OK = True
 except Exception:
     PdfReader = None  # type: ignore
@@ -251,26 +256,67 @@ def _safe_hours(delta_seconds: float) -> int:
     return max(0, int(round(delta_seconds / 3600.0)))
 
 
-def _make_day_template(field_name: str, day: int) -> str:
-    s = str(day)
-    s_02 = f"{day:02d}"
-    
-    # Keresünk az utolsó számcsoportra, ha az pont a napot jelenti
-    m = re.search(r"(\d+)(?!.*\d)", field_name)
-    if m:
-        num_str = m.group(1)
-        if num_str == s_02:
-            return field_name[:m.start(1)] + "{day:02d}" + field_name[m.end(1):]
-        elif num_str == s:
-            return field_name[:m.start(1)] + "{day}" + field_name[m.end(1):]
+def _day_token_re(day: int) -> re.Pattern:
+    return re.compile(rf"(?<!\d)0*{int(day)}(?!\d)")
 
-    # Ha nem az utolsó szám, de szerepel benne
-    if s_02 in field_name:
-        return field_name.replace(s_02, "{day:02d}")
-    if s in field_name:
-        return field_name.replace(s, "{day}")
-        
-    return field_name
+def _make_day_template(field_name: str, day: int) -> str:
+    # A cél: bármelyik naphoz tartozó mezőből tudjunk template-et csinálni.
+    # Tehát nem csak akkor, ha a mezőnévben pont a mai nap (day) van.
+    nums = list(re.finditer(r"\d+", field_name))
+    if not nums:
+        return field_name
+
+    lower = field_name.lower()
+
+    def score(m: re.Match) -> int:
+        s = 0
+        token = m.group(0)
+        try:
+            v = int(token)
+        except Exception:
+            return -10_000
+
+        # Csak 1..31 érdekel, különben nem nap
+        if 1 <= v <= 31:
+            s += 100
+        else:
+            return -10_000
+
+        # Ha pont a mai nap, az extra jó
+        if v == int(day):
+            s += 80
+
+        # Kontextus: nap/row/sor/day közelében erős jel
+        left_ctx = lower[max(0, m.start() - 6):m.start()]
+        if "row" in left_ctx or "sor" in left_ctx or "day" in left_ctx or "nap" in left_ctx:
+            s += 60
+
+        # Elválasztók (gyakori form-field minta: _02, -02, .02)
+        if m.start() > 0 and field_name[m.start() - 1] in "_- .":
+            s += 15
+
+        # Végén lévő sorszám gyakori
+        if m.end() == len(field_name):
+            s += 20
+
+        return s
+
+    best = max(nums, key=score)
+    try:
+        best_val = int(best.group(0))
+    except Exception:
+        return field_name
+
+    if not (1 <= best_val <= 31):
+        return field_name
+
+    w = len(best.group(0))
+    if w <= 1:
+        repl = "{day}"
+    else:
+        repl = "{day:0" + str(w) + "d}"
+
+    return field_name[:best.start()] + repl + field_name[best.end():]
 
 def _resolve_tpl(tpl: str, day: int) -> str:
     if "{day" in tpl:
@@ -289,49 +335,42 @@ def _fill_pdf(pdf_path: str, values: dict) -> tuple:
         reader = PdfReader(pdf_path)
         writer = PdfWriter()
         writer.append(reader)
-        
-        # A legtöbb PDF olvasóhoz (pl. Chrome, Edge) szükséges a NeedAppearances flag 
-        # ha nem frissíti be a grafikus megjelenést automatikusan a pypdf
+
         if hasattr(writer, "set_need_appearances_writer"):
             try:
                 writer.set_need_appearances_writer(True)
             except Exception:
                 pass
-        
+
         try:
             if hasattr(writer, "root_object") and "/AcroForm" in writer.root_object:
                 writer.root_object["/AcroForm"][NameObject("/NeedAppearances")] = BooleanObject(True)
         except Exception:
             pass
-            
+
         for p in writer.pages:
             try:
-                # Az auto_regenerate=False szándékos elhagyása, így használja a pypdf defaultját 
-                # vagy frissít megfelelően.
                 writer.update_page_form_field_values(p, values)
             except Exception:
                 pass
-                
+
         tmp = pdf_path + ".tmp"
         with open(tmp, "wb") as f:
             writer.write(f)
-            
-        # Fájl cseréje (ha egy másik olvasó fogja, hibát dobhat)
+
         try:
             os.replace(tmp, pdf_path)
         except PermissionError:
             os.remove(tmp)
             return False, "A PDF nyitva van egy másik programban. Kérlek zárd be!"
-            
+
         return True, "OK"
     except Exception as e:
         return False, f"PDF hiba: {e}"
 
 def _auto_detect_fields(names: list[str], day: int) -> dict | None:
-    day_str = str(day)
-    day_str_02 = f"{day:02d}"
-
-    day_fields = [n for n in names if day_str in n or day_str_02 in n or f"Row{day}" in n or f"_{day}" in n]
+    token_re = _day_token_re(day)
+    day_fields = [n for n in names if token_re.search(n) or f"Row{day}" in n or f"_{day}" in n]
 
     arr, lea, hrs, sig = None, None, None, None
 
@@ -380,7 +419,6 @@ def _auto_detect_fields(names: list[str], day: int) -> dict | None:
         }
     return None
 
-
 class TaskHudWindow(QWidget):
     hotkey_pressed = pyqtSignal()
 
@@ -410,7 +448,6 @@ class TaskHudWindow(QWidget):
         self._last_counts_active: int | None = None
         self._last_counts_expired: int | None = None
 
-        # Státusz szöveg eltüntetéséhez
         self._pending_status_text: str | None = None
         self._pending_status_kind: str | None = None
         self._status_clear_timer = QTimer(self)
@@ -585,7 +622,6 @@ class TaskHudWindow(QWidget):
         self.anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         self.anim.finished.connect(self._on_anim_finished)
 
-        # -- Felbontás / képernyő változások kezelése --
         app_inst = QApplication.instance()
         if app_inst:
             for sc in app_inst.screens():
@@ -641,15 +677,15 @@ class TaskHudWindow(QWidget):
         if not screen:
             return
         avail = screen.availableGeometry()
-        
+
         expected_w, expected_h = self._expected_size()
-        
+
         current_x = self.x()
         current_y = self.y()
-        
+
         new_x = current_x
         new_y = current_y
-        
+
         if new_x + expected_w > avail.right():
             new_x = avail.right() - expected_w
         if new_y + expected_h > avail.bottom():
@@ -658,7 +694,7 @@ class TaskHudWindow(QWidget):
             new_x = avail.left()
         if new_y < avail.top():
             new_y = avail.top()
-            
+
         if new_x != current_x or new_y != current_y:
             self.move(new_x, new_y)
 
@@ -677,13 +713,12 @@ class TaskHudWindow(QWidget):
             needed_w = margins_and_spacing + lbl_w + btn_w
             expected_w = max(WINDOW_MIN_WIDTH, needed_w)
 
-        # Képernyő magassághoz igazítás (OS layout harc elkerülése)
         screen = self.screen()
         if screen:
             avail = screen.availableGeometry()
             avail_h = max(WINDOW_MIN_HEIGHT, avail.height() - 20)
             avail_w = max(WINDOW_MIN_WIDTH, avail.width() - 20)
-            
+
             if expected_h > avail_h:
                 expected_h = avail_h
             if expected_w > avail_w:
@@ -1057,7 +1092,6 @@ class TaskHudWindow(QWidget):
             msg.exec()
             return
 
-        # Nem csak töröljük a configot csendben, hanem egyből elindítjuk a kiválasztást
         success = self._ensure_work_pdf_and_templates(force_new=True)
         if success:
             self.set_status_guarded("Új PDF sikeresen beállítva.", kind="ok", auto_clear_ms=2000)
@@ -1099,22 +1133,16 @@ class TaskHudWindow(QWidget):
         self.header.set_work_minutes(max(0, mins))
 
     def _ensure_work_pdf_and_templates(self, force_new: bool = False) -> bool:
-        """
-        Gondoskodik róla, hogy legyen PDF és template konfigurálva.
-        force_new: ha True, akkor figyelmen kívül hagyja a meglévő beállításokat és újat kér.
-        Visszatérési érték: True, ha sikeres a beállítás, False ha a felhasználó megszakította.
-        """
         if force_new:
             path, _ = QFileDialog.getOpenFileName(
                 self, "Válaszd ki az ÚJ jelenléti PDF-et", "", "PDF (*.pdf)"
             )
             if not path:
-                return False # Megszakította a kiválasztást
+                return False
 
             self._work_pdf_path = path
             self._defaults[_WORK_PDF_KEY] = path
 
-            # Mivel új fájlt választott, a régi template-eket is töröljük és újat kérünk
             self._work_tpl = {}
             if _WORK_TPL_KEY in self._defaults:
                 del self._defaults[_WORK_TPL_KEY]
@@ -1123,7 +1151,6 @@ class TaskHudWindow(QWidget):
             return self._configure_pdf_fields_interactive()
 
         else:
-            # Sima ellenőrzés (nem force_new)
             if not self._work_pdf_path:
                 path, _ = QFileDialog.getOpenFileName(
                     self, "Válaszd ki a jelenléti PDF-et", "", "PDF (*.pdf)"
@@ -1249,15 +1276,11 @@ class TaskHudWindow(QWidget):
             return
 
         if not self._work_running:
-            # Megvizsgáljuk, hogy volt-e már korábban beállítva PDF
             had_pdf_before = bool(self._work_pdf_path and self._work_tpl)
 
-            # Bekérjük/Ellenőrizzük a PDF-et.
             if not self._ensure_work_pdf_and_templates(force_new=False):
-                return # Ha a user cancel-t nyomott, kilépünk.
+                return
 
-            # Ha EDDIG NEM VOLT beállítva semmi (most csinálta meg a user a kiválasztást)
-            # Akkor visszatérünk, hogy csak a következő gombnyomásra induljon a munka.
             if not had_pdf_before:
                 self.set_status_guarded("PDF beállítva. Kattints a munkakezdéshez!", kind="ok", auto_clear_ms=3000)
                 return
