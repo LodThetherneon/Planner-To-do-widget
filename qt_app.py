@@ -223,6 +223,13 @@ class TaskHudWindow(QWidget):
         self.anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         self.anim.finished.connect(self._on_anim_finished)
 
+        # -- Felbontás / képernyő változások kezelése --
+        app_inst = QApplication.instance()
+        if app_inst:
+            for sc in app_inst.screens():
+                sc.geometryChanged.connect(self._on_screen_geometry_changed)
+            app_inst.screenAdded.connect(self._on_screen_added)
+
         self.header.h_toggle_clicked.connect(self.toggle_width)
         self.header.refresh_clicked.connect(lambda: self.start_refresh(skip_intro=False))
         self.header.toggle_clicked.connect(self.toggle_expand)
@@ -254,6 +261,43 @@ class TaskHudWindow(QWidget):
         else:
             print("Hotkey: 'keyboard' nincs telepítve")
 
+    def _on_screen_added(self, screen) -> None:
+        screen.geometryChanged.connect(self._on_screen_geometry_changed)
+
+    def _on_screen_geometry_changed(self, geo=None) -> None:
+        if self.anim.state() == QPropertyAnimation.State.Running:
+            self.anim.stop()
+        self._correcting_size = True
+        self._apply_expanded_state(self._expanded, immediate=True)
+        self._ensure_on_screen()
+        self._correcting_size = False
+
+    def _ensure_on_screen(self) -> None:
+        screen = self.screen()
+        if not screen:
+            return
+        avail = screen.availableGeometry()
+        
+        expected_w, expected_h = self._expected_size()
+        
+        current_x = self.x()
+        current_y = self.y()
+        
+        new_x = current_x
+        new_y = current_y
+        
+        if new_x + expected_w > avail.right():
+            new_x = avail.right() - expected_w
+        if new_y + expected_h > avail.bottom():
+            new_y = avail.bottom() - expected_h
+        if new_x < avail.left():
+            new_x = avail.left()
+        if new_y < avail.top():
+            new_y = avail.top()
+            
+        if new_x != current_x or new_y != current_y:
+            self.move(new_x, new_y)
+
     # ── Szélesség lock ─────────────────────────────────────────────────────────
 
     def _expected_size(self) -> tuple[int, int]:
@@ -272,6 +316,18 @@ class TaskHudWindow(QWidget):
 
             expected_w = max(WINDOW_MIN_WIDTH, needed_w)
 
+        # Capping a méreteket a képernyő méretéhez, hogy elkerüljük az OS vs Qt végtelen átméretezési harcát
+        screen = self.screen()
+        if screen:
+            avail = screen.availableGeometry()
+            avail_h = max(WINDOW_MIN_HEIGHT, avail.height() - 20)
+            avail_w = max(WINDOW_MIN_WIDTH, avail.width() - 20)
+            
+            if expected_h > avail_h:
+                expected_h = avail_h
+            if expected_w > avail_w:
+                expected_w = avail_w
+
         return expected_w, expected_h
 
     def _unlock_width_constraints(self) -> None:
@@ -281,14 +337,17 @@ class TaskHudWindow(QWidget):
         self.setMaximumHeight(_QWIDGETSIZE_MAX)
 
     def _lock_width_constraints(self) -> None:
-        expected_w, _ = self._expected_size()
+        expected_w, expected_h = self._expected_size()
         self.setMinimumWidth(expected_w)
         self.setMaximumWidth(expected_w)
         
-        # opcionálisan rögzíthetjük a magasságot is lock-olt állapotban
+        # Rögzítjük a magasságot is lock-olt állapotban
         if not self._expanded:
             self.setMinimumHeight(WINDOW_MIN_HEIGHT)
             self.setMaximumHeight(WINDOW_MIN_HEIGHT)
+        else:
+            self.setMinimumHeight(WINDOW_MIN_HEIGHT)
+            self.setMaximumHeight(expected_h)
 
     def _right_edge_x(self) -> int:
         return int(self.x() + self.width())
@@ -356,6 +415,7 @@ class TaskHudWindow(QWidget):
             self.anim.stop()
         self._correcting_size = True
         self._apply_expanded_state(self._expanded, immediate=True)
+        self._ensure_on_screen()
         self._correcting_size = False
 
     def resizeEvent(self, event) -> None:
@@ -365,16 +425,9 @@ class TaskHudWindow(QWidget):
         if self.anim.state() == QPropertyAnimation.State.Running:
             return
 
-        right_edge = self._right_edge_x()
-        current_y = self.y()
-
-        expected_w, expected_h = self._expected_size()
+        # Csak lezárjuk a constraint-eket, de NEM erőszakoljuk ki a setGeometry-t.
+        # Ezzel megakadályozzuk az OS-szel való végtelen harcot.
         self._lock_width_constraints()
-
-        if self.width() != expected_w or self.height() != expected_h:
-            self._correcting_size = True
-            self.setGeometry(right_edge - expected_w, current_y, expected_w, expected_h)
-            self._correcting_size = False
 
     def _on_anim_finished(self) -> None:
         expected_w, expected_h = self._expected_size()
@@ -388,6 +441,7 @@ class TaskHudWindow(QWidget):
             
         self._correcting_size = False
         self._lock_width_constraints()
+        self._ensure_on_screen()
         self._anim_right_edge = None
         self._anim_y_edge = None
 
@@ -1329,4 +1383,3 @@ class _AddTaskPanel(QFrame):
         elif which == "due":
             self.ed_due.setStyleSheet("border:1px solid #FF7B7B;")
             QTimer.singleShot(800, lambda: self.ed_due.setStyleSheet(""))
-
