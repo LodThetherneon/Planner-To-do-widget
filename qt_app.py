@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime
+import re
+from datetime import datetime, timedelta
 
 try:
     import keyboard  # type: ignore
@@ -11,10 +12,20 @@ except Exception:
     keyboard = None  # type: ignore
     _KEYBOARD_OK = False
 
+try:
+    from pypdf import PdfReader, PdfWriter  # type: ignore
+    _PYPDF_OK = True
+except Exception:
+    PdfReader = None  # type: ignore
+    PdfWriter = None  # type: ignore
+    _PYPDF_OK = False
+
 from PyQt6.QtCore import Qt, QTimer, QSize, QPropertyAnimation, QEasingCurve, QPoint, pyqtSignal, QRect
 from PyQt6.QtWidgets import (
     QWidget, QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QLineEdit,
-    QComboBox, QScrollArea, QApplication, QSizePolicy, QStackedWidget
+    QComboBox, QScrollArea, QApplication, QSizePolicy, QStackedWidget,
+    QFileDialog, QMessageBox, QDialog, QListWidget, QListWidgetItem,
+    QDialogButtonBox,
 )
 from PyQt6.QtWidgets import QStyleOptionSlider
 from PyQt6.QtGui import QMouseEvent
@@ -40,9 +51,109 @@ GLOBAL_HOTKEY = "alt+w"
 
 _QWIDGETSIZE_MAX = 16777215
 
-# Gombok fix szélessége pixelben
 _BTN_W = 110
 
+_WORK_PDF_KEY      = "__work_pdf_path"
+_WORK_TPL_KEY      = "__work_pdf_templates"
+_WORK_RUNNING_KEY  = "__work_running"
+_WORK_START_KEY    = "__work_start_iso"
+
+_DIALOG_QSS = """
+QDialog {
+    background-color: #1E1E2E;
+    color: #E0E0E0;
+    border: 1px solid #444466;
+    border-radius: 8px;
+}
+QLabel {
+    color: #E0E0E0;
+    font-size: 13px;
+    background: transparent;
+}
+QListWidget {
+    background-color: #2A2A3E;
+    color: #E0E0E0;
+    border: 1px solid #555577;
+    border-radius: 6px;
+    font-size: 12px;
+    outline: 0;
+}
+QListWidget::item {
+    padding: 5px 8px;
+    border-radius: 4px;
+}
+QListWidget::item:selected {
+    background-color: #4455AA;
+    color: #FFFFFF;
+}
+QListWidget::item:hover {
+    background-color: #333355;
+}
+QLineEdit {
+    background-color: #2A2A3E;
+    color: #E0E0E0;
+    border: 1px solid #555577;
+    border-radius: 5px;
+    padding: 5px 8px;
+    font-size: 12px;
+}
+QPushButton {
+    background-color: #3A3A5A;
+    color: #E0E0E0;
+    border: 1px solid #555577;
+    border-radius: 5px;
+    padding: 5px 14px;
+    font-size: 12px;
+    min-width: 70px;
+}
+QPushButton:hover {
+    background-color: #4455AA;
+    border: 1px solid #6677CC;
+}
+QPushButton:pressed {
+    background-color: #334499;
+}
+QScrollBar:vertical {
+    background: #1E1E2E;
+    width: 8px;
+    border-radius: 4px;
+}
+QScrollBar::handle:vertical {
+    background: #555577;
+    border-radius: 4px;
+    min-height: 20px;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0;
+}
+"""
+
+_MSGBOX_QSS = """
+QMessageBox {
+    background-color: #1E1E2E;
+    color: #E0E0E0;
+}
+QMessageBox QLabel {
+    color: #E0E0E0;
+    font-size: 13px;
+}
+QMessageBox QPushButton {
+    background-color: #3A3A5A;
+    color: #E0E0E0;
+    border: 1px solid #555577;
+    border-radius: 5px;
+    padding: 5px 14px;
+    font-size: 12px;
+    min-width: 60px;
+}
+QMessageBox QPushButton:hover {
+    background-color: #4455AA;
+    border: 1px solid #6677CC;
+}
+QMessageBox QPushButton:pressed {
+    background-color: #334499;
+}
+"""
 
 def _load_defaults() -> dict:
     if not os.path.exists(DEFAULTS_FILE):
@@ -53,13 +164,190 @@ def _load_defaults() -> dict:
     except Exception:
         return {}
 
-
 def _save_defaults(data: dict) -> None:
     try:
         with open(DEFAULTS_FILE, "w", encoding="utf-8") as f:
             json.dump(data or {}, f, ensure_ascii=False, indent=2)
     except Exception:
         pass
+
+class _FieldPickerDialog(QDialog):
+    def __init__(self, title: str, label: str, field_names: list[str], parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setWindowFlags(
+            Qt.WindowType.Dialog |
+            Qt.WindowType.FramelessWindowHint
+        )
+        self.setModal(True)
+        self.setMinimumWidth(380)
+        self.setStyleSheet(_DIALOG_QSS)
+        self._result: str | None = None
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(16, 16, 16, 16)
+        lay.setSpacing(10)
+        lbl = QLabel(label)
+        lbl.setWordWrap(True)
+        lay.addWidget(lbl)
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("🔍 Keresés a mezőnevekben...")
+        self._search.textChanged.connect(self._filter)
+        lay.addWidget(self._search)
+        self._list = QListWidget()
+        self._list.setMinimumHeight(220)
+        self._all_names = list(field_names)
+        for n in self._all_names:
+            self._list.addItem(QListWidgetItem(n))
+        if self._list.count() > 0:
+            self._list.setCurrentRow(0)
+        self._list.doubleClicked.connect(self.accept)
+        lay.addWidget(self._list)
+        btn_box = QHBoxLayout()
+        btn_box.setSpacing(8)
+        btn_ok = QPushButton("OK")
+        btn_ok.setDefault(True)
+        btn_cancel = QPushButton("Mégse")
+        btn_ok.clicked.connect(self.accept)
+        btn_cancel.clicked.connect(self.reject)
+        btn_box.addStretch()
+        btn_box.addWidget(btn_ok)
+        btn_box.addWidget(btn_cancel)
+        lay.addLayout(btn_box)
+
+    def _filter(self, text: str) -> None:
+        t = text.strip().lower()
+        self._list.clear()
+        for n in self._all_names:
+            if t in n.lower():
+                self._list.addItem(QListWidgetItem(n))
+        if self._list.count() > 0:
+            self._list.setCurrentRow(0)
+
+    def selected(self) -> str | None:
+        item = self._list.currentItem()
+        return item.text() if item else None
+
+    def accept(self) -> None:
+        self._result = self.selected()
+        super().accept()
+
+    @staticmethod
+    def pick(title: str, label: str, field_names: list[str], parent=None) -> tuple[str | None, bool]:
+        dlg = _FieldPickerDialog(title, label, field_names, parent)
+        ok = dlg.exec() == QDialog.DialogCode.Accepted
+        return (dlg._result, ok)
+
+
+def _round_to_nearest_hour(dt: datetime) -> datetime:
+    if dt.minute >= 30:
+        return dt.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    return dt.replace(minute=0, second=0, microsecond=0)
+
+def _fmt_hhmm(dt: datetime) -> str:
+    return dt.strftime("%H:%M")
+
+def _safe_hours(delta_seconds: float) -> int:
+    return max(0, int(round(delta_seconds / 3600.0)))
+
+
+def _make_day_template(field_name: str, day: int) -> str:
+    s = str(day)
+    m = re.search(r"(\d+)(?!.*\d)", field_name)
+    if m and m.group(1) == s:
+        w = len(m.group(1))
+        return field_name[:m.start(1)] + "{day:0" + str(w) + "d}" + field_name[m.end(1):]
+    idx = field_name.find(s)
+    if idx != -1:
+        return field_name[:idx] + "{day:02d}" + field_name[idx + len(s):]
+    return field_name
+
+def _resolve_tpl(tpl: str, day: int) -> str:
+    if "{day" in tpl:
+        try:
+            return tpl.format(day=day)
+        except Exception:
+            return tpl
+    return tpl
+
+def _fill_pdf(pdf_path: str, values: dict) -> tuple:
+    if not _PYPDF_OK or PdfReader is None or PdfWriter is None:
+        return False, "A pypdf nincs telepítve."
+    if not pdf_path or not os.path.exists(pdf_path):
+        return False, "A PDF fájl nem található."
+    try:
+        reader = PdfReader(pdf_path)
+        writer = PdfWriter()
+        writer.append(reader)
+        if hasattr(writer, "set_need_appearances_writer"):
+            try:
+                writer.set_need_appearances_writer(True)
+            except Exception:
+                pass
+        for p in writer.pages:
+            try:
+                writer.update_page_form_field_values(p, values, auto_regenerate=False)
+            except TypeError:
+                writer.update_page_form_field_values(p, values)
+        tmp = pdf_path + ".tmp"
+        with open(tmp, "wb") as f:
+            writer.write(f)
+        os.replace(tmp, pdf_path)
+        return True, "OK"
+    except Exception as e:
+        return False, f"PDF hiba: {e}"
+
+def _auto_detect_fields(names: list[str], day: int) -> dict | None:
+    day_str = str(day)
+    day_str_02 = f"{day:02d}"
+
+    day_fields = [n for n in names if day_str in n or day_str_02 in n or f"Row{day}" in n or f"_{day}" in n]
+
+    arr, lea, hrs, sig = None, None, None, None
+
+    def find_best(keywords, pool):
+        for k in keywords:
+            for n in pool:
+                if k.lower() in n.lower():
+                    return n
+        return None
+
+    arr = find_best(["érkezés", "erkezes", "erk"], day_fields)
+    lea = find_best(["távozás", "tavozas", "tav"], day_fields)
+    hrs = find_best(["óraszám", "oraszam", "óra", "ora", "nappal"], day_fields)
+
+    sig = find_best(["aláírás", "alairas", "sign", "al"], day_fields)
+    if not sig:
+        sig = find_best(["aláírás", "alairas", "sign"], names)
+    if not sig:
+        sig_candidates = [n for n in names if "al" in n.lower() and "r" in n.lower() and "s" in n.lower()]
+        if sig_candidates and len(sig_candidates) >= day:
+            sig = sig_candidates[day-1] if (day-1) < len(sig_candidates) else sig_candidates[-1]
+        elif sig_candidates:
+            sig = sig_candidates[0]
+
+    if not arr:
+        arr_candidates = [n for n in names if "érkezés" in n.lower() or "erkezes" in n.lower()]
+        if arr_candidates and len(arr_candidates) >= day:
+            arr = arr_candidates[day-1] if (day-1) < len(arr_candidates) else arr_candidates[-1]
+
+    if not lea:
+        lea_candidates = [n for n in names if "távozás" in n.lower() or "tavozas" in n.lower()]
+        if lea_candidates and len(lea_candidates) >= day:
+            lea = lea_candidates[day-1] if (day-1) < len(lea_candidates) else lea_candidates[-1]
+
+    if not hrs:
+        hrs_candidates = [n for n in names if "óraszám" in n.lower() or "oraszam" in n.lower() or "nappal" in n.lower()]
+        if hrs_candidates and len(hrs_candidates) >= day:
+            hrs = hrs_candidates[day-1] if (day-1) < len(hrs_candidates) else hrs_candidates[-1]
+
+    if arr and lea and hrs and sig:
+        return {
+            "arrival": _make_day_template(arr, day),
+            "leave":   _make_day_template(lea, day),
+            "hours":   _make_day_template(hrs, day),
+            "sign":    _make_day_template(sig, day),
+        }
+    return None
 
 
 class TaskHudWindow(QWidget):
@@ -90,19 +378,33 @@ class TaskHudWindow(QWidget):
         self._hotkey_banner_active = False
         self._last_counts_active: int | None = None
         self._last_counts_expired: int | None = None
+
+        # Státusz szöveg eltüntetéséhez
         self._pending_status_text: str | None = None
         self._pending_status_kind: str | None = None
+        self._status_clear_timer = QTimer(self)
+        self._status_clear_timer.setSingleShot(True)
+        self._status_clear_timer.timeout.connect(self._restore_counts_text)
 
         self._last_tasks: list[TaskViewModel] = []
         self._completed_page = 1
 
         self._correcting_size = False
-        
-        # Opcionális, bár a geometry animáció már önmagában kezeli:
+
         self._anim_right_edge: int | None = None
         self._anim_y_edge: int | None = None
 
         self._defaults = _load_defaults()
+
+        self._work_running  = bool(self._defaults.get(_WORK_RUNNING_KEY, False))
+        self._work_start_dt: datetime | None = None
+        self._work_pdf_path: str | None = self._defaults.get(_WORK_PDF_KEY) or None
+        self._work_tpl: dict  = self._defaults.get(_WORK_TPL_KEY) or {}
+
+        self._work_timer = QTimer(self)
+        self._work_timer.setInterval(60_000)
+        self._work_timer.timeout.connect(self._tick_work_timer)
+
         self._plan_items: list[dict] = []
         self._plan_by_label: dict[str, dict] = {}
         self._buckets_by_plan: dict[str, list[dict]] = {}
@@ -140,7 +442,6 @@ class TaskHudWindow(QWidget):
         self.content_layout.setContentsMargins(12, 0, 12, 12)
         self.content_layout.setSpacing(10)
 
-        # ── Login sor ──────────────────────────────────────────────────────────
         self.login_row = QWidget()
         lr = QHBoxLayout(self.login_row)
         lr.setContentsMargins(0, 0, 0, 0)
@@ -159,22 +460,54 @@ class TaskHudWindow(QWidget):
         self.btn_logout.clicked.connect(self.start_logout_mainthread)
         self.btn_logout.setStyleSheet("background-color: #5A2E2E; border: 1px solid #7D4444;")
 
-        self._btn_stack.addWidget(self.btn_login)   # index 0
-        self._btn_stack.addWidget(self.btn_logout)  # index 1
+        self._btn_stack.addWidget(self.btn_login)
+        self._btn_stack.addWidget(self.btn_logout)
         self._btn_stack.setCurrentIndex(0)
 
-        self.lbl_hint = QLabel("Üdv, v1.05")
-        self.lbl_hint.setStyleSheet("color:#AAB3BB; font-size:11px;")
-        self.lbl_hint.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.btn_work = QPushButton("Munka kezdete")
+        self.btn_work.setFixedWidth(_BTN_W)
+        self.btn_work.setVisible(False)
+        self.btn_work.clicked.connect(self._on_work_button_clicked)
 
         self.btn_edit_all = QPushButton("Szerkesztés")
         self.btn_edit_all.setVisible(False)
         self.btn_edit_all.clicked.connect(self._on_edit_all_clicked)
 
         lr.addWidget(self._btn_stack, 0)
-        lr.addWidget(self.lbl_hint, 1)
+        lr.addWidget(self.btn_work, 0)
         lr.addWidget(self.btn_edit_all, 0)
-        # ──────────────────────────────────────────────────────────────────────
+
+        self.content_layout.addWidget(self.login_row)
+
+        self.hint_row = QWidget()
+        hr = QHBoxLayout(self.hint_row)
+        hr.setContentsMargins(0, 0, 0, 0)
+        hr.setSpacing(10)
+
+        self.lbl_hint = QLabel("Üdv, v1.05")
+        self.lbl_hint.setStyleSheet("color:#AAB3BB; font-size:11px;")
+        self.lbl_hint.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+
+        self.btn_reset_pdf = QPushButton("⚙ Új PDF")
+        self.btn_reset_pdf.setToolTip("Másik PDF választása / beállítások törlése")
+        self.btn_reset_pdf.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                color: #AAB3BB;
+                border: 1px solid #444466;
+                border-radius: 4px;
+                padding: 2px 6px;
+                font-size: 10px;
+            }
+            QPushButton:hover { background-color: #2A2A3E; color: #FFFFFF; }
+        """)
+        self.btn_reset_pdf.setVisible(False)
+        self.btn_reset_pdf.clicked.connect(self._reset_work_pdf)
+
+        hr.addWidget(self.lbl_hint)
+        hr.addWidget(self.btn_reset_pdf)
+
+        self.content_layout.addWidget(self.hint_row)
 
         self.add_toggle = QPushButton("+ Új feladat")
         self.add_panel = _AddTaskPanel()
@@ -184,7 +517,6 @@ class TaskHudWindow(QWidget):
         self.add_panel.plan_changed.connect(self._on_plan_changed)
         self.add_panel.bucket_changed.connect(self._on_bucket_changed)
 
-        self.content_layout.addWidget(self.login_row)
         self.content_layout.addWidget(self.add_toggle)
         self.content_layout.addWidget(self.add_panel)
 
@@ -217,18 +549,10 @@ class TaskHudWindow(QWidget):
         self.resize(WINDOW_WIDTH, WINDOW_MIN_HEIGHT)
         self._move_to_top_right()
 
-        # ÚJ: SIZE helyett GEOMETRY animálása, így rögzítjük az Y-t és az X-et.
         self.anim = QPropertyAnimation(self, b"geometry")
         self.anim.setDuration(ANIM_DURATION_MS)
         self.anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         self.anim.finished.connect(self._on_anim_finished)
-
-        # -- Felbontás / képernyő változások kezelése --
-        app_inst = QApplication.instance()
-        if app_inst:
-            for sc in app_inst.screens():
-                sc.geometryChanged.connect(self._on_screen_geometry_changed)
-            app_inst.screenAdded.connect(self._on_screen_added)
 
         self.header.h_toggle_clicked.connect(self.toggle_width)
         self.header.refresh_clicked.connect(lambda: self.start_refresh(skip_intro=False))
@@ -261,44 +585,7 @@ class TaskHudWindow(QWidget):
         else:
             print("Hotkey: 'keyboard' nincs telepítve")
 
-    def _on_screen_added(self, screen) -> None:
-        screen.geometryChanged.connect(self._on_screen_geometry_changed)
-
-    def _on_screen_geometry_changed(self, geo=None) -> None:
-        if self.anim.state() == QPropertyAnimation.State.Running:
-            self.anim.stop()
-        self._correcting_size = True
-        self._apply_expanded_state(self._expanded, immediate=True)
-        self._ensure_on_screen()
-        self._correcting_size = False
-
-    def _ensure_on_screen(self) -> None:
-        screen = self.screen()
-        if not screen:
-            return
-        avail = screen.availableGeometry()
-        
-        expected_w, expected_h = self._expected_size()
-        
-        current_x = self.x()
-        current_y = self.y()
-        
-        new_x = current_x
-        new_y = current_y
-        
-        if new_x + expected_w > avail.right():
-            new_x = avail.right() - expected_w
-        if new_y + expected_h > avail.bottom():
-            new_y = avail.bottom() - expected_h
-        if new_x < avail.left():
-            new_x = avail.left()
-        if new_y < avail.top():
-            new_y = avail.top()
-            
-        if new_x != current_x or new_y != current_y:
-            self.move(new_x, new_y)
-
-    # ── Szélesség lock ─────────────────────────────────────────────────────────
+        self._restore_work_state_on_startup()
 
     def _expected_size(self) -> tuple[int, int]:
         expected_h = WINDOW_MAX_HEIGHT if self._expanded else WINDOW_MIN_HEIGHT
@@ -313,20 +600,7 @@ class TaskHudWindow(QWidget):
             lbl_w = self.header.lbl.sizeHint().width()
             btn_w = self.header.btn_h_toggle.sizeHint().width()
             needed_w = margins_and_spacing + lbl_w + btn_w
-
             expected_w = max(WINDOW_MIN_WIDTH, needed_w)
-
-        # Capping a méreteket a képernyő méretéhez, hogy elkerüljük az OS vs Qt végtelen átméretezési harcát
-        screen = self.screen()
-        if screen:
-            avail = screen.availableGeometry()
-            avail_h = max(WINDOW_MIN_HEIGHT, avail.height() - 20)
-            avail_w = max(WINDOW_MIN_WIDTH, avail.width() - 20)
-            
-            if expected_h > avail_h:
-                expected_h = avail_h
-            if expected_w > avail_w:
-                expected_w = avail_w
 
         return expected_w, expected_h
 
@@ -337,17 +611,13 @@ class TaskHudWindow(QWidget):
         self.setMaximumHeight(_QWIDGETSIZE_MAX)
 
     def _lock_width_constraints(self) -> None:
-        expected_w, expected_h = self._expected_size()
+        expected_w, _ = self._expected_size()
         self.setMinimumWidth(expected_w)
         self.setMaximumWidth(expected_w)
-        
-        # Rögzítjük a magasságot is lock-olt állapotban
+
         if not self._expanded:
             self.setMinimumHeight(WINDOW_MIN_HEIGHT)
             self.setMaximumHeight(WINDOW_MIN_HEIGHT)
-        else:
-            self.setMinimumHeight(WINDOW_MIN_HEIGHT)
-            self.setMaximumHeight(expected_h)
 
     def _right_edge_x(self) -> int:
         return int(self.x() + self.width())
@@ -366,14 +636,11 @@ class TaskHudWindow(QWidget):
             self._correcting_size = True
             expected_w, expected_h = self._expected_size()
             self._unlock_width_constraints()
-            
-            # Méret és pozíció azonnali frissítése egyszerre
+
             self.setGeometry(right_edge - expected_w, current_y, expected_w, expected_h)
-            
+
             self._lock_width_constraints()
             self._correcting_size = False
-
-    # ──────────────────────────────────────────────────────────────────────────
 
     def bring_to_front(self) -> None:
         self.showNormal()
@@ -415,7 +682,6 @@ class TaskHudWindow(QWidget):
             self.anim.stop()
         self._correcting_size = True
         self._apply_expanded_state(self._expanded, immediate=True)
-        self._ensure_on_screen()
         self._correcting_size = False
 
     def resizeEvent(self, event) -> None:
@@ -425,23 +691,28 @@ class TaskHudWindow(QWidget):
         if self.anim.state() == QPropertyAnimation.State.Running:
             return
 
-        # Csak lezárjuk a constraint-eket, de NEM erőszakoljuk ki a setGeometry-t.
-        # Ezzel megakadályozzuk az OS-szel való végtelen harcot.
+        right_edge = self._right_edge_x()
+        current_y = self.y()
+
+        expected_w, expected_h = self._expected_size()
         self._lock_width_constraints()
+
+        if self.width() != expected_w or self.height() != expected_h:
+            self._correcting_size = True
+            self.setGeometry(right_edge - expected_w, current_y, expected_w, expected_h)
+            self._correcting_size = False
 
     def _on_anim_finished(self) -> None:
         expected_w, expected_h = self._expected_size()
         self._correcting_size = True
-        
-        # Végső méretezés geometry beállítással, garantálva az Y-t
+
         if self._anim_right_edge is not None and self._anim_y_edge is not None:
             self.setGeometry(self._anim_right_edge - expected_w, self._anim_y_edge, expected_w, expected_h)
         else:
             self.resize(expected_w, expected_h)
-            
+
         self._correcting_size = False
         self._lock_width_constraints()
-        self._ensure_on_screen()
         self._anim_right_edge = None
         self._anim_y_edge = None
 
@@ -613,7 +884,7 @@ class TaskHudWindow(QWidget):
         self.header.set_toggle_icon("▴" if expanded else "▾")
 
         target_w, target_h = self._expected_size()
-        
+
         self._unlock_width_constraints()
 
         right_edge = self._right_edge_x()
@@ -632,8 +903,6 @@ class TaskHudWindow(QWidget):
         self._anim_right_edge = right_edge
         self._anim_y_edge = current_y
 
-        # GEOMETRY ANIMÁLÁSA: (X, Y, Width, Height)
-        # Itt határozzuk meg pontosan az ablak animáció alatti végpozícióját.
         start_rect = self.geometry()
         end_rect = QRect(right_edge - target_w, current_y, target_w, target_h)
 
@@ -654,27 +923,332 @@ class TaskHudWindow(QWidget):
         self.add_panel.setVisible(now)
         self.add_toggle.setText("- Bezárás" if now else "+ Új feladat")
 
-    def set_status_guarded(self, text: str, kind: str = "info") -> None:
+    def _restore_counts_text(self) -> None:
+        if self._last_counts_active is not None and self._last_counts_expired is not None:
+            self.header.set_counts(self._last_counts_active, self._last_counts_expired)
+
+    def set_status_guarded(self, text: str, kind: str = "info", auto_clear_ms: int | None = None) -> None:
         if self._startup_banner_active or self._hotkey_banner_active:
             self._pending_status_text = text
             self._pending_status_kind = kind
             return
+
         self.header.set_status(text, kind=kind)
 
+        if auto_clear_ms is not None:
+            self._status_clear_timer.start(auto_clear_ms)
+        else:
+            self._status_clear_timer.stop()
+
     def _update_ui_for_logged_in(self) -> None:
-        self._btn_stack.setCurrentIndex(1)   # Kijelentkezés gomb mutatása
+        self._btn_stack.setCurrentIndex(1)
         self.btn_edit_all.setVisible(True)
+        self.btn_work.setVisible(True)
+        self.btn_reset_pdf.setVisible(True)
+        self.btn_work.setDisabled(not _PYPDF_OK)
         self.add_toggle.setVisible(True)
 
     def _update_ui_for_logged_out(self) -> None:
-        self._btn_stack.setCurrentIndex(0)   # Bejelentkezés gomb mutatása
+        self._btn_stack.setCurrentIndex(0)
         self.btn_edit_all.setVisible(False)
+        self.btn_work.setVisible(False)
+        self.btn_reset_pdf.setVisible(False)
         self.lbl_hint.setText("Kérlek jelentkezz be")
         self._clear_task_widgets()
         self._last_tasks = []
         self.add_toggle.setVisible(False)
         self.add_panel.setVisible(False)
         self.header.set_text("Nincs bejelentkezve")
+        self.btn_work.setText("Munka kezdete")
+        self.header.set_work_minutes(None)
+
+    # ── Munkaidő metódusok ────────────────────────────────────────────────────
+
+    def _reset_work_pdf(self) -> None:
+        if self._work_running:
+            msg = QMessageBox(self)
+            msg.setStyleSheet(_MSGBOX_QSS)
+            msg.setWindowTitle("Munkaidő fut")
+            msg.setText("Előbb állítsd le a munkaidőt, mielőtt új PDF-et választasz!")
+            msg.setIcon(QMessageBox.Icon.Warning)
+            msg.exec()
+            return
+
+        # Nem csak töröljük a configot csendben, hanem egyből elindítjuk a kiválasztást
+        success = self._ensure_work_pdf_and_templates(force_new=True)
+        if success:
+            self.set_status_guarded("Új PDF sikeresen beállítva.", kind="ok", auto_clear_ms=2000)
+
+    def _restore_work_state_on_startup(self) -> None:
+        if not self._work_running:
+            self.header.set_work_minutes(None)
+            self.btn_work.setText("Munka kezdete")
+            return
+
+        iso = str(self._defaults.get(_WORK_START_KEY) or "").strip()
+        if not iso:
+            self._work_running = False
+            self._defaults[_WORK_RUNNING_KEY] = False
+            _save_defaults(self._defaults)
+            self.header.set_work_minutes(None)
+            self.btn_work.setText("Munka kezdete")
+            return
+
+        try:
+            self._work_start_dt = datetime.fromisoformat(iso)
+        except Exception:
+            self._work_running = False
+            self._defaults[_WORK_RUNNING_KEY] = False
+            _save_defaults(self._defaults)
+            self.header.set_work_minutes(None)
+            self.btn_work.setText("Munka kezdete")
+            return
+
+        self.btn_work.setText("Munka vége")
+        self._tick_work_timer()
+        self._work_timer.start()
+
+    def _tick_work_timer(self) -> None:
+        if not self._work_running or not self._work_start_dt:
+            self.header.set_work_minutes(None)
+            return
+        mins = int((datetime.now() - self._work_start_dt).total_seconds() // 60)
+        self.header.set_work_minutes(max(0, mins))
+
+    def _ensure_work_pdf_and_templates(self, force_new: bool = False) -> bool:
+        """
+        Gondoskodik róla, hogy legyen PDF és template konfigurálva.
+        force_new: ha True, akkor figyelmen kívül hagyja a meglévő beállításokat és újat kér.
+        Visszatérési érték: True, ha sikeres a beállítás, False ha a felhasználó megszakította.
+        """
+        if force_new:
+            path, _ = QFileDialog.getOpenFileName(
+                self, "Válaszd ki az ÚJ jelenléti PDF-et", "", "PDF (*.pdf)"
+            )
+            if not path:
+                return False # Megszakította a kiválasztást
+
+            self._work_pdf_path = path
+            self._defaults[_WORK_PDF_KEY] = path
+
+            # Mivel új fájlt választott, a régi template-eket is töröljük és újat kérünk
+            self._work_tpl = {}
+            if _WORK_TPL_KEY in self._defaults:
+                del self._defaults[_WORK_TPL_KEY]
+            _save_defaults(self._defaults)
+
+            return self._configure_pdf_fields_interactive()
+
+        else:
+            # Sima ellenőrzés (nem force_new)
+            if not self._work_pdf_path:
+                path, _ = QFileDialog.getOpenFileName(
+                    self, "Válaszd ki a jelenléti PDF-et", "", "PDF (*.pdf)"
+                )
+                if not path:
+                    return False
+                self._work_pdf_path = path
+                self._defaults[_WORK_PDF_KEY] = path
+                _save_defaults(self._defaults)
+
+            if not isinstance(self._work_tpl, dict):
+                self._work_tpl = {}
+
+            need = ["arrival", "leave", "hours", "sign"]
+            if not all(k in self._work_tpl and str(self._work_tpl.get(k) or "").strip() for k in need):
+                return self._configure_pdf_fields_interactive()
+
+            return True
+
+    def _configure_pdf_fields_interactive(self) -> bool:
+        if not _PYPDF_OK or PdfReader is None:
+            msg = QMessageBox(self)
+            msg.setStyleSheet(_MSGBOX_QSS)
+            msg.setWindowTitle("pypdf hiányzik")
+            msg.setText("Telepítsd: pip install pypdf")
+            msg.setIcon(QMessageBox.Icon.Warning)
+            msg.exec()
+            return False
+        if not self._work_pdf_path:
+            return False
+
+        try:
+            reader = PdfReader(self._work_pdf_path)
+            fields = reader.get_fields() or {}
+            names = sorted(fields.keys(), key=lambda s: str(s).lower())
+        except Exception as e:
+            msg = QMessageBox(self)
+            msg.setStyleSheet(_MSGBOX_QSS)
+            msg.setWindowTitle("PDF hiba")
+            msg.setText(f"Nem tudtam beolvasni a mezőket:\n{e}")
+            msg.setIcon(QMessageBox.Icon.Critical)
+            msg.exec()
+            return False
+
+        if not names:
+            msg = QMessageBox(self)
+            msg.setStyleSheet(_MSGBOX_QSS)
+            msg.setWindowTitle("PDF hiba")
+            msg.setText("Nem találtam kitölthető mezőket ebben a PDF-ben.")
+            msg.setIcon(QMessageBox.Icon.Warning)
+            msg.exec()
+            return False
+
+        day = datetime.now().day
+
+        detected = _auto_detect_fields(names, day)
+        if detected:
+            msg = QMessageBox(self)
+            msg.setStyleSheet(_MSGBOX_QSS)
+            msg.setWindowTitle("Mezők automatikus felismerése")
+            msg.setText("A rendszer sikeresen felismert egy lehetséges mezőstruktúrát a PDF-ben!\nSzeretnéd ezt használni, vagy te adod meg kézzel?")
+            msg.setIcon(QMessageBox.Icon.Question)
+            btn_yes = msg.addButton("Igen, használd ezt", QMessageBox.ButtonRole.YesRole)
+            btn_no = msg.addButton("Nem, én adom meg", QMessageBox.ButtonRole.NoRole)
+            msg.exec()
+
+            if msg.clickedButton() == btn_yes:
+                self._work_tpl = detected
+                self._defaults[_WORK_TPL_KEY] = self._work_tpl
+                _save_defaults(self._defaults)
+                return True
+
+        a, ok = _FieldPickerDialog.pick(
+            "Érkezés mező",
+            f"Válaszd ki az ÉRKEZÉS mezőt\n(mai nap – {day}-e sora):",
+            names, self
+        )
+        if not ok or not a:
+            return False
+
+        l, ok = _FieldPickerDialog.pick(
+            "Távozás mező",
+            f"Válaszd ki a TÁVOZÁS mezőt\n(mai nap – {day}-e sora):",
+            names, self
+        )
+        if not ok or not l:
+            return False
+
+        h, ok = _FieldPickerDialog.pick(
+            "Óraszám mező",
+            f"Válaszd ki az ÓRASZÁM / NAPPAL mezőt\n(mai nap – {day}-e sora):",
+            names, self
+        )
+        if not ok or not h:
+            return False
+
+        sig, ok = _FieldPickerDialog.pick(
+            "Aláírás mező",
+            "Válaszd ki az ALÁÍRÁS mezőt:",
+            names, self
+        )
+        if not ok or not sig:
+            return False
+
+        self._work_tpl = {
+            "arrival": _make_day_template(str(a), day),
+            "leave":   _make_day_template(str(l), day),
+            "hours":   _make_day_template(str(h), day),
+            "sign":    _make_day_template(str(sig), day),
+        }
+        self._defaults[_WORK_TPL_KEY] = self._work_tpl
+        _save_defaults(self._defaults)
+        return True
+
+    def _on_work_button_clicked(self) -> None:
+        if not _PYPDF_OK:
+            msg = QMessageBox(self)
+            msg.setStyleSheet(_MSGBOX_QSS)
+            msg.setWindowTitle("pypdf hiányzik")
+            msg.setText("Telepítsd: pip install pypdf")
+            msg.setIcon(QMessageBox.Icon.Warning)
+            msg.exec()
+            return
+
+        if not self._work_running:
+            # Megvizsgáljuk, hogy volt-e már korábban beállítva PDF
+            had_pdf_before = bool(self._work_pdf_path and self._work_tpl)
+
+            # Bekérjük/Ellenőrizzük a PDF-et.
+            if not self._ensure_work_pdf_and_templates(force_new=False):
+                return # Ha a user cancel-t nyomott, kilépünk.
+
+            # Ha EDDIG NEM VOLT beállítva semmi (most csinálta meg a user a kiválasztást)
+            # Akkor visszatérünk, hogy csak a következő gombnyomásra induljon a munka.
+            if not had_pdf_before:
+                self.set_status_guarded("PDF beállítva. Kattints a munkakezdéshez!", kind="ok", auto_clear_ms=3000)
+                return
+
+            now = datetime.now()
+            self._work_start_dt = now
+            self._work_running = True
+            self._defaults[_WORK_RUNNING_KEY] = True
+            self._defaults[_WORK_START_KEY] = now.isoformat(timespec="seconds")
+            _save_defaults(self._defaults)
+
+            day = now.day
+            arr_field = _resolve_tpl(str(self._work_tpl.get("arrival") or ""), day)
+            arr_time  = _fmt_hhmm(_round_to_nearest_hour(now))
+
+            ok, err_msg = _fill_pdf(self._work_pdf_path or "", {arr_field: arr_time})
+            if not ok:
+                self.set_status_guarded(err_msg, kind="warn")
+            else:
+                self.set_status_guarded(f"Munka kezdete: {arr_time}", kind="ok", auto_clear_ms=2000)
+
+            self.btn_work.setText("Munka vége")
+            self._tick_work_timer()
+            self._work_timer.start()
+            return
+
+        if not self._ensure_work_pdf_and_templates():
+            return
+
+        if not self._work_start_dt:
+            self._work_running = False
+            self._defaults[_WORK_RUNNING_KEY] = False
+            _save_defaults(self._defaults)
+            self.btn_work.setText("Munka kezdete")
+            self.header.set_work_minutes(None)
+            return
+
+        end_dt = datetime.now()
+        day    = end_dt.day
+
+        leave_field = _resolve_tpl(str(self._work_tpl.get("leave") or ""), day)
+        hours_field = _resolve_tpl(str(self._work_tpl.get("hours") or ""), day)
+        sign_field  = _resolve_tpl(str(self._work_tpl.get("sign") or ""), day)
+
+        leave_time    = _fmt_hhmm(_round_to_nearest_hour(end_dt))
+        start_rounded = _round_to_nearest_hour(self._work_start_dt)
+        end_rounded   = _round_to_nearest_hour(end_dt)
+        hours         = _safe_hours((end_rounded - start_rounded).total_seconds())
+        sign_name     = backend.get_my_display_name() or ""
+
+        values = {
+            leave_field: leave_time,
+            hours_field: str(hours),
+        }
+
+        if sign_field and sign_name:
+            values[sign_field] = sign_name
+
+        ok, err_msg = _fill_pdf(self._work_pdf_path or "", values)
+        if not ok:
+            self.set_status_guarded(err_msg, kind="warn")
+        else:
+            self.set_status_guarded(f"Munka vége: {leave_time}  ({hours} óra)", kind="ok", auto_clear_ms=2000)
+
+        self._work_running = False
+        self._work_start_dt = None
+        self._work_timer.stop()
+        self.header.set_work_minutes(None)
+        self._defaults[_WORK_RUNNING_KEY] = False
+        self._defaults[_WORK_START_KEY]   = ""
+        _save_defaults(self._defaults)
+        self.btn_work.setText("Munka kezdete")
+
+    # ─────────────────────────────────────────────────────────────────────────
 
     def start_login_mainthread(self) -> None:
         self.btn_login.setDisabled(True)
@@ -695,7 +1269,7 @@ class TaskHudWindow(QWidget):
             self.set_status_guarded("Nem sikerült bejelentkezni.", kind="warn")
             return
 
-        self.set_status_guarded("Planner Widget  ✓", kind="ok")
+        self.set_status_guarded("Planner Widget  ✓", kind="ok", auto_clear_ms=2000)
         self._update_ui_for_logged_in()
         self._load_plans_from_graph()
         QTimer.singleShot(450, lambda: self.start_refresh(skip_intro=True))
@@ -704,7 +1278,7 @@ class TaskHudWindow(QWidget):
         self.set_status_guarded("Kijelentkezés...", kind="info")
         if backend.logout():
             self._update_ui_for_logged_out()
-            self.set_status_guarded("Sikeres kijelentkezés.", kind="ok")
+            self.set_status_guarded("Sikeres kijelentkezés.", kind="ok", auto_clear_ms=2000)
         else:
             self.set_status_guarded("Hiba a kijelentkezés során.", kind="error")
 
@@ -762,14 +1336,14 @@ class TaskHudWindow(QWidget):
         if not buckets:
             self._selected_bucket_id = None
             self.add_panel.set_bucket_options([], enabled=False)
-            self.set_status_guarded("Nincs bucket ebben a tervben.", kind="warn")
+            self.set_status_guarded("Nincs bucket ebben a tervben.", kind="warn", auto_clear_ms=3000)
             return
 
         if len(buckets) == 1:
             only = buckets[0]
             self._selected_bucket_id = str(only.get("id") or "")
             self.add_panel.set_bucket_options([str(only.get("name") or "(Névtelen bucket)")], enabled=False)
-            self.set_status_guarded("Egy alap státusz", kind="ok")
+            self.set_status_guarded("Egy alap státusz", kind="ok", auto_clear_ms=2000)
             return
 
         bucket_names = [str(b.get("name") or "(Névtelen bucket)") for b in buckets]
@@ -810,32 +1384,32 @@ class TaskHudWindow(QWidget):
         self._selected_bucket_id = chosen_id
         self._defaults[plan_id] = chosen_id
         _save_defaults(self._defaults)
-        self.set_status_guarded("Alap státusz elmentve.", kind="ok")
+        self.set_status_guarded("Alap státusz elmentve.", kind="ok", auto_clear_ms=2000)
 
     def _on_add_clicked(self, title: str, due: str) -> None:
         title = title.strip()
         due = due.strip()
 
         if not title:
-            self.set_status_guarded("Hiányzó név", kind="error")
+            self.set_status_guarded("Hiányzó név", kind="error", auto_clear_ms=2000)
             self.add_panel.flash_error("title")
             return
 
         ok, err = validate_ymd(due)
         if not ok:
-            self.set_status_guarded(err or "Hibás dátum", kind="error")
+            self.set_status_guarded(err or "Hibás dátum", kind="error", auto_clear_ms=2000)
             self.add_panel.flash_error("due")
             return
 
         if not self._selected_plan_id:
-            self.set_status_guarded("Válassz csoportot.", kind="warn")
+            self.set_status_guarded("Válassz csoportot.", kind="warn", auto_clear_ms=2000)
             return
 
         plan_id = self._selected_plan_id
         buckets = self._buckets_by_plan.get(plan_id, [])
 
         if len(buckets) > 1 and not self._selected_bucket_id:
-            self.set_status_guarded("Több bucket van: válassz alap státuszt.", kind="warn")
+            self.set_status_guarded("Több bucket van: válassz alap státuszt.", kind="warn", auto_clear_ms=3000)
             return
 
         if len(buckets) == 1:
@@ -844,7 +1418,7 @@ class TaskHudWindow(QWidget):
             bucket_id = self._selected_bucket_id or ""
 
         if not bucket_id:
-            self.set_status_guarded("Nincs státusz kiválasztva.", kind="warn")
+            self.set_status_guarded("Nincs státusz kiválasztva.", kind="warn", auto_clear_ms=2000)
             return
 
         due_arg = None if not due else due
@@ -855,7 +1429,7 @@ class TaskHudWindow(QWidget):
 
     def _on_action_finished_create(self, ok: bool, msg: str) -> None:
         if not ok:
-            self.set_status_guarded(msg or "Létrehozás sikertelen", kind="error")
+            self.set_status_guarded(msg or "Létrehozás sikertelen", kind="error", auto_clear_ms=3000)
             return
         self.add_panel.clear_inputs()
         if self.add_panel.isVisible():
@@ -890,13 +1464,13 @@ class TaskHudWindow(QWidget):
             err = str(data.get("error") or "")
             if "Nincs bejelentkezve" in err:
                 self._update_ui_for_logged_out()
-                self.set_status_guarded("Jelentkezz be a frissítéshez.", kind="warn")
+                self.set_status_guarded("Jelentkezz be a frissítéshez.", kind="warn", auto_clear_ms=3000)
             else:
-                self.set_status_guarded(f"Hiba: {err}", kind="warn")
+                self.set_status_guarded(f"Hiba: {err}", kind="warn", auto_clear_ms=3000)
             return
 
         if not isinstance(data, list):
-            self.set_status_guarded("Ismeretlen válasz", kind="warn")
+            self.set_status_guarded("Ismeretlen válasz", kind="warn", auto_clear_ms=3000)
             return
 
         self._update_ui_for_logged_in()
@@ -940,7 +1514,8 @@ class TaskHudWindow(QWidget):
         if self._startup_banner_active or self._hotkey_banner_active:
             return
 
-        self.header.set_counts(active=active, expired=expired)
+        if not self._status_clear_timer.isActive():
+            self.header.set_counts(active=active, expired=expired)
 
     def _clear_task_widgets(self) -> None:
         while self.scroll_layout.count() > 1:
@@ -1067,7 +1642,7 @@ class TaskHudWindow(QWidget):
         job = start_action(
             "complete_task", (task_id, title),
             lambda ok, msg: (play_sound(COMPLETESOUND), self.start_refresh(skip_intro=True))
-            if ok else self.set_status_guarded(msg or "Sikertelen", kind="error")
+            if ok else self.set_status_guarded(msg or "Sikertelen", kind="error", auto_clear_ms=3000)
         )
         self._jobs.append(job)
 
@@ -1077,7 +1652,7 @@ class TaskHudWindow(QWidget):
         job = start_action(
             "reopen_task", (task_id, title),
             lambda ok, msg: (play_sound(REOPENSOUND), self.start_refresh(skip_intro=True))
-            if ok else self.set_status_guarded(msg or "Sikertelen", kind="error")
+            if ok else self.set_status_guarded(msg or "Sikertelen", kind="error", auto_clear_ms=3000)
         )
         self._jobs.append(job)
 
@@ -1087,7 +1662,7 @@ class TaskHudWindow(QWidget):
         job = start_action(
             "delete_task", (task_id,),
             lambda ok, msg: self.start_refresh(skip_intro=True)
-            if ok else self.set_status_guarded(msg or "Törlés sikertelen", kind="error")
+            if ok else self.set_status_guarded(msg or "Törlés sikertelen", kind="error", auto_clear_ms=3000)
         )
         self._jobs.append(job)
 
@@ -1145,7 +1720,7 @@ class TaskHudWindow(QWidget):
                 card = item.widget()
                 if card.task.status == "FOLYAMATBAN" and card.has_changes():
                     if not card.is_date_valid():
-                        self.set_status_guarded(f"Hibás dátum!", kind="error")
+                        self.set_status_guarded(f"Hibás dátum!", kind="error", auto_clear_ms=3000)
                         card.edit_date.setStyleSheet("border: 1px solid red;")
                         return
                     cards_to_save.append(card)
@@ -1179,9 +1754,9 @@ class TaskHudWindow(QWidget):
         if self._pending_saves <= 0:
             self.btn_edit_all.setDisabled(False)
             if self._save_errors:
-                self.set_status_guarded("Egyes mentések sikertelenek", kind="error")
+                self.set_status_guarded("Egyes mentések sikertelenek", kind="error", auto_clear_ms=3000)
             else:
-                self.set_status_guarded("Sikeres mentés", kind="ok")
+                self.set_status_guarded("Sikeres mentés", kind="ok", auto_clear_ms=2000)
                 self._global_edit_mode = False
                 self.btn_edit_all.setText("Szerkesztés")
                 for i in range(self.scroll_layout.count()):
@@ -1196,32 +1771,28 @@ class TaskHudWindow(QWidget):
 
 
 class _Header(QWidget):
-    refresh_clicked = pyqtSignal()
-    toggle_clicked = pyqtSignal()
-    close_clicked = pyqtSignal()
+    refresh_clicked  = pyqtSignal()
+    toggle_clicked   = pyqtSignal()
+    close_clicked    = pyqtSignal()
     h_toggle_clicked = pyqtSignal()
-    text_changed = pyqtSignal()
+    text_changed     = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("HeaderBar")
 
-        # SZIGORÚ MAGASSÁG: az ablak min. magassága (62) mínusz a root layout külső margói (8+8 = 16)
-        # Ezzel kizárjuk az esélyét is, hogy bezárásnál összenyomódjon a fejléc
         self.setFixedHeight(WINDOW_MIN_HEIGHT - 16)
 
         self.lbl = QLabel("Betöltés...")
         self.lbl.setTextFormat(Qt.TextFormat.RichText)
         self.lbl.setWordWrap(False)
-        
-        # A natív függőleges középre igazítás használata a "div" HTML trükk helyett
         self.lbl.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
         self.btn_h_toggle = MinimalButton("left")
-        self.btn_refresh = MinimalButton("refresh")
-        self.btn_toggle = MinimalButton("down")
-        self.btn_close = MinimalButton("close")
+        self.btn_refresh  = MinimalButton("refresh")
+        self.btn_toggle   = MinimalButton("down")
+        self.btn_close    = MinimalButton("close")
         self.btn_close.setObjectName("CloseBtn")
 
         self.btn_h_toggle.setToolTip("Oldalpanel összecsukása/kinyitása")
@@ -1229,52 +1800,64 @@ class _Header(QWidget):
         self.btn_toggle.setToolTip("Kinyit/bezár")
         self.btn_close.setToolTip("Bezárás")
 
-        self._last_active: int = 0
-        self._last_expired: int = 0
+        self._last_active: int   = 0
+        self._last_expired: int  = 0
         self._has_real_counts: bool = False
 
+        self._work_minutes: int | None = None
+        self._base_html: str = "Betöltés..."
+
         row = QHBoxLayout(self)
-        # Fent és lent 0 margó, a 46px magas térben az AlignVCenter pont középre fog tenni mindent
         row.setContentsMargins(14, 0, 10, 0)
         row.setSpacing(8)
         row.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
-        row.addWidget(self.lbl, 1, Qt.AlignmentFlag.AlignVCenter)
-        row.addWidget(self.btn_h_toggle, 0, Qt.AlignmentFlag.AlignVCenter)
-        row.addWidget(self.btn_refresh, 0, Qt.AlignmentFlag.AlignVCenter)
-        row.addWidget(self.btn_toggle, 0, Qt.AlignmentFlag.AlignVCenter)
-        row.addWidget(self.btn_close, 0, Qt.AlignmentFlag.AlignVCenter)
+        row.addWidget(self.lbl,           1, Qt.AlignmentFlag.AlignVCenter)
+        row.addWidget(self.btn_h_toggle,  0, Qt.AlignmentFlag.AlignVCenter)
+        row.addWidget(self.btn_refresh,   0, Qt.AlignmentFlag.AlignVCenter)
+        row.addWidget(self.btn_toggle,    0, Qt.AlignmentFlag.AlignVCenter)
+        row.addWidget(self.btn_close,     0, Qt.AlignmentFlag.AlignVCenter)
 
         self.btn_h_toggle.clicked.connect(self.h_toggle_clicked.emit)
         self.btn_refresh.clicked.connect(self.refresh_clicked.emit)
         self.btn_toggle.clicked.connect(self.toggle_clicked.emit)
         self.btn_close.clicked.connect(self.close_clicked.emit)
 
-    def set_counts(self, active: int, expired: int) -> None:
-        self._has_real_counts = True
-        self._last_active = int(active or 0)
-        self._last_expired = int(expired or 0)
+    def set_work_minutes(self, minutes: int | None) -> None:
+        self._work_minutes = None if minutes is None else int(minutes)
+        self._apply_lbl()
 
-        active_val = self._last_active
-        expired_val = self._last_expired
-
-        # Kivettük a korábbi <div>-et, csak tiszta szöveg/span maradt
-        if expired_val > 0:
-            html = (
-                f"{active_val} <b>Feladat</b> | "
-                f"<span style='color:#FF5555; font-weight:800;'>{expired_val} Lejárt</span>"
+    def _apply_lbl(self) -> None:
+        html = self._base_html or ""
+        if self._work_minutes is not None:
+            html += (
+                f" <span style='color:#55AAFF; font-weight:800;'>"
+                f"• {self._work_minutes} perc</span>"
             )
-        else:
-            html = f"{active_val} <b>Feladat</b>"
-
-        self.lbl.setStyleSheet("")
         self.lbl.setText(html)
         self.text_changed.emit()
 
+    def set_counts(self, active: int, expired: int) -> None:
+        self._has_real_counts = True
+        self._last_active  = int(active or 0)
+        self._last_expired = int(expired or 0)
+
+        if self._last_expired > 0:
+            html = (
+                f"{self._last_active} <b>Feladat</b> | "
+                f"<span style='color:#FF5555; font-weight:800;'>{self._last_expired} Lejárt</span>"
+            )
+        else:
+            html = f"{self._last_active} <b>Feladat</b>"
+
+        self.lbl.setStyleSheet("")
+        self._base_html = html
+        self._apply_lbl()
+
     def set_text(self, text: str) -> None:
         self.lbl.setStyleSheet("")
-        self.lbl.setText(text)
-        self.text_changed.emit()
+        self._base_html = text
+        self._apply_lbl()
 
     def set_toggle_icon(self, txt: str) -> None:
         self.btn_toggle.icon_type = "up" if txt == "▴" else "down"
@@ -1292,13 +1875,13 @@ class _Header(QWidget):
             self.lbl.setStyleSheet("color:#9BE59B; font-weight:700;")
         else:
             self.lbl.setStyleSheet("color:#EAEAEA; font-weight:700;")
-        self.lbl.setText(text)
-        self.text_changed.emit()
+        self._base_html = text
+        self._apply_lbl()
 
 
 class _AddTaskPanel(QFrame):
-    add_clicked = pyqtSignal(str, str)
-    plan_changed = pyqtSignal(str)
+    add_clicked    = pyqtSignal(str, str)
+    plan_changed   = pyqtSignal(str)
     bucket_changed = pyqtSignal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
