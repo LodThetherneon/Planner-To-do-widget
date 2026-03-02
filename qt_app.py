@@ -14,6 +14,7 @@ except Exception:
 
 try:
     from pypdf import PdfReader, PdfWriter  # type: ignore
+    from pypdf.generic import BooleanObject, NameObject
     _PYPDF_OK = True
 except Exception:
     PdfReader = None  # type: ignore
@@ -252,13 +253,23 @@ def _safe_hours(delta_seconds: float) -> int:
 
 def _make_day_template(field_name: str, day: int) -> str:
     s = str(day)
+    s_02 = f"{day:02d}"
+    
+    # Keresünk az utolsó számcsoportra, ha az pont a napot jelenti
     m = re.search(r"(\d+)(?!.*\d)", field_name)
-    if m and m.group(1) == s:
-        w = len(m.group(1))
-        return field_name[:m.start(1)] + "{day:0" + str(w) + "d}" + field_name[m.end(1):]
-    idx = field_name.find(s)
-    if idx != -1:
-        return field_name[:idx] + "{day:02d}" + field_name[idx + len(s):]
+    if m:
+        num_str = m.group(1)
+        if num_str == s_02:
+            return field_name[:m.start(1)] + "{day:02d}" + field_name[m.end(1):]
+        elif num_str == s:
+            return field_name[:m.start(1)] + "{day}" + field_name[m.end(1):]
+
+    # Ha nem az utolsó szám, de szerepel benne
+    if s_02 in field_name:
+        return field_name.replace(s_02, "{day:02d}")
+    if s in field_name:
+        return field_name.replace(s, "{day}")
+        
     return field_name
 
 def _resolve_tpl(tpl: str, day: int) -> str:
@@ -278,20 +289,40 @@ def _fill_pdf(pdf_path: str, values: dict) -> tuple:
         reader = PdfReader(pdf_path)
         writer = PdfWriter()
         writer.append(reader)
+        
+        # A legtöbb PDF olvasóhoz (pl. Chrome, Edge) szükséges a NeedAppearances flag 
+        # ha nem frissíti be a grafikus megjelenést automatikusan a pypdf
         if hasattr(writer, "set_need_appearances_writer"):
             try:
                 writer.set_need_appearances_writer(True)
             except Exception:
                 pass
+        
+        try:
+            if hasattr(writer, "root_object") and "/AcroForm" in writer.root_object:
+                writer.root_object["/AcroForm"][NameObject("/NeedAppearances")] = BooleanObject(True)
+        except Exception:
+            pass
+            
         for p in writer.pages:
             try:
-                writer.update_page_form_field_values(p, values, auto_regenerate=False)
-            except TypeError:
+                # Az auto_regenerate=False szándékos elhagyása, így használja a pypdf defaultját 
+                # vagy frissít megfelelően.
                 writer.update_page_form_field_values(p, values)
+            except Exception:
+                pass
+                
         tmp = pdf_path + ".tmp"
         with open(tmp, "wb") as f:
             writer.write(f)
-        os.replace(tmp, pdf_path)
+            
+        # Fájl cseréje (ha egy másik olvasó fogja, hibát dobhat)
+        try:
+            os.replace(tmp, pdf_path)
+        except PermissionError:
+            os.remove(tmp)
+            return False, "A PDF nyitva van egy másik programban. Kérlek zárd be!"
+            
         return True, "OK"
     except Exception as e:
         return False, f"PDF hiba: {e}"
@@ -554,6 +585,13 @@ class TaskHudWindow(QWidget):
         self.anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         self.anim.finished.connect(self._on_anim_finished)
 
+        # -- Felbontás / képernyő változások kezelése --
+        app_inst = QApplication.instance()
+        if app_inst:
+            for sc in app_inst.screens():
+                sc.geometryChanged.connect(self._on_screen_geometry_changed)
+            app_inst.screenAdded.connect(self._on_screen_added)
+
         self.header.h_toggle_clicked.connect(self.toggle_width)
         self.header.refresh_clicked.connect(lambda: self.start_refresh(skip_intro=False))
         self.header.toggle_clicked.connect(self.toggle_expand)
@@ -587,6 +625,43 @@ class TaskHudWindow(QWidget):
 
         self._restore_work_state_on_startup()
 
+    def _on_screen_added(self, screen) -> None:
+        screen.geometryChanged.connect(self._on_screen_geometry_changed)
+
+    def _on_screen_geometry_changed(self, geo=None) -> None:
+        if self.anim.state() == QPropertyAnimation.State.Running:
+            self.anim.stop()
+        self._correcting_size = True
+        self._apply_expanded_state(self._expanded, immediate=True)
+        self._ensure_on_screen()
+        self._correcting_size = False
+
+    def _ensure_on_screen(self) -> None:
+        screen = self.screen()
+        if not screen:
+            return
+        avail = screen.availableGeometry()
+        
+        expected_w, expected_h = self._expected_size()
+        
+        current_x = self.x()
+        current_y = self.y()
+        
+        new_x = current_x
+        new_y = current_y
+        
+        if new_x + expected_w > avail.right():
+            new_x = avail.right() - expected_w
+        if new_y + expected_h > avail.bottom():
+            new_y = avail.bottom() - expected_h
+        if new_x < avail.left():
+            new_x = avail.left()
+        if new_y < avail.top():
+            new_y = avail.top()
+            
+        if new_x != current_x or new_y != current_y:
+            self.move(new_x, new_y)
+
     def _expected_size(self) -> tuple[int, int]:
         expected_h = WINDOW_MAX_HEIGHT if self._expanded else WINDOW_MIN_HEIGHT
         if not getattr(self, "_expanded_width", True):
@@ -602,6 +677,18 @@ class TaskHudWindow(QWidget):
             needed_w = margins_and_spacing + lbl_w + btn_w
             expected_w = max(WINDOW_MIN_WIDTH, needed_w)
 
+        # Képernyő magassághoz igazítás (OS layout harc elkerülése)
+        screen = self.screen()
+        if screen:
+            avail = screen.availableGeometry()
+            avail_h = max(WINDOW_MIN_HEIGHT, avail.height() - 20)
+            avail_w = max(WINDOW_MIN_WIDTH, avail.width() - 20)
+            
+            if expected_h > avail_h:
+                expected_h = avail_h
+            if expected_w > avail_w:
+                expected_w = avail_w
+
         return expected_w, expected_h
 
     def _unlock_width_constraints(self) -> None:
@@ -611,13 +698,16 @@ class TaskHudWindow(QWidget):
         self.setMaximumHeight(_QWIDGETSIZE_MAX)
 
     def _lock_width_constraints(self) -> None:
-        expected_w, _ = self._expected_size()
+        expected_w, expected_h = self._expected_size()
         self.setMinimumWidth(expected_w)
         self.setMaximumWidth(expected_w)
 
         if not self._expanded:
             self.setMinimumHeight(WINDOW_MIN_HEIGHT)
             self.setMaximumHeight(WINDOW_MIN_HEIGHT)
+        else:
+            self.setMinimumHeight(WINDOW_MIN_HEIGHT)
+            self.setMaximumHeight(expected_h)
 
     def _right_edge_x(self) -> int:
         return int(self.x() + self.width())
@@ -682,6 +772,7 @@ class TaskHudWindow(QWidget):
             self.anim.stop()
         self._correcting_size = True
         self._apply_expanded_state(self._expanded, immediate=True)
+        self._ensure_on_screen()
         self._correcting_size = False
 
     def resizeEvent(self, event) -> None:
@@ -691,16 +782,7 @@ class TaskHudWindow(QWidget):
         if self.anim.state() == QPropertyAnimation.State.Running:
             return
 
-        right_edge = self._right_edge_x()
-        current_y = self.y()
-
-        expected_w, expected_h = self._expected_size()
         self._lock_width_constraints()
-
-        if self.width() != expected_w or self.height() != expected_h:
-            self._correcting_size = True
-            self.setGeometry(right_edge - expected_w, current_y, expected_w, expected_h)
-            self._correcting_size = False
 
     def _on_anim_finished(self) -> None:
         expected_w, expected_h = self._expected_size()
@@ -713,6 +795,7 @@ class TaskHudWindow(QWidget):
 
         self._correcting_size = False
         self._lock_width_constraints()
+        self._ensure_on_screen()
         self._anim_right_edge = None
         self._anim_y_edge = None
 
