@@ -260,8 +260,11 @@ def _day_token_re(day: int) -> re.Pattern:
     return re.compile(rf"(?<!\d)0*{int(day)}(?!\d)")
 
 def _make_day_template(field_name: str, day: int) -> str:
-    # A cél: bármelyik naphoz tartozó mezőből tudjunk template-et csinálni.
-    # Tehát nem csak akkor, ha a mezőnévben pont a mai nap (day) van.
+    # A cél: megtalálni a mezőnévben az aktuális napot (day), 
+    # de elkerülni az olyan fix számokat, mint a 6:00 vagy 22:00
+    
+    # Keresünk olyan számokat, amik NEM időpont részei
+    # Kizárjuk a "6" és "22" számokat is, ha azok gyanúsak
     nums = list(re.finditer(r"\d+", field_name))
     if not nums:
         return field_name
@@ -281,10 +284,15 @@ def _make_day_template(field_name: str, day: int) -> str:
             s += 100
         else:
             return -10_000
+            
+        # EXTRA VÉDELEM: Ha 6 vagy 22 (időpontok a mezőnévben), büntessük nagyon,
+        # kivéve ha épp egyezik a mai nappal. Ha a mai nap 6 vagy 22, akkor kicsit trükkös.
+        if (v == 6 or v == 22 or v == 0) and v != int(day):
+            return -10_000
 
         # Ha pont a mai nap, az extra jó
         if v == int(day):
-            s += 80
+            s += 500  # Erősen preferáljuk a tényleges mai napot
 
         # Kontextus: nap/row/sor/day közelében erős jel
         left_ctx = lower[max(0, m.start() - 6):m.start()]
@@ -301,13 +309,15 @@ def _make_day_template(field_name: str, day: int) -> str:
 
         return s
 
-    best = max(nums, key=score)
+    # Szűrjük ki azokat a találatokat, amiknek negatív a pontja
+    valid_nums = [m for m in nums if score(m) > 0]
+    if not valid_nums:
+        return field_name
+        
+    best = max(valid_nums, key=score)
     try:
         best_val = int(best.group(0))
     except Exception:
-        return field_name
-
-    if not (1 <= best_val <= 31):
         return field_name
 
     w = len(best.group(0))
@@ -317,6 +327,7 @@ def _make_day_template(field_name: str, day: int) -> str:
         repl = "{day:0" + str(w) + "d}"
 
     return field_name[:best.start()] + repl + field_name[best.end():]
+
 
 def _resolve_tpl(tpl: str, day: int) -> str:
     if "{day" in tpl:
@@ -370,7 +381,8 @@ def _fill_pdf(pdf_path: str, values: dict) -> tuple:
 
 def _auto_detect_fields(names: list[str], day: int) -> dict | None:
     token_re = _day_token_re(day)
-    day_fields = [n for n in names if token_re.search(n) or f"Row{day}" in n or f"_{day}" in n]
+    # Keresünk a mai napra utaló mezőket
+    day_fields = [n for n in names if token_re.search(n) or f"Row{day}" in n or f"_{day}" in n or f"{day:02d}" in n]
 
     arr, lea, hrs, sig = None, None, None, None
 
@@ -383,7 +395,9 @@ def _auto_detect_fields(names: list[str], day: int) -> dict | None:
 
     arr = find_best(["érkezés", "erkezes", "erk"], day_fields)
     lea = find_best(["távozás", "tavozas", "tav"], day_fields)
-    hrs = find_best(["óraszám", "oraszam", "óra", "ora", "nappal"], day_fields)
+    
+    # Itt adtuk hozzá kifejezetten az "óraszám nappal" variációit
+    hrs = find_best(["óraszám nappal", "oraszam nappal", "óraszám", "oraszam", "nappal"], day_fields)
 
     sig = find_best(["aláírás", "alairas", "sign", "al"], day_fields)
     if not sig:
@@ -406,7 +420,7 @@ def _auto_detect_fields(names: list[str], day: int) -> dict | None:
             lea = lea_candidates[day-1] if (day-1) < len(lea_candidates) else lea_candidates[-1]
 
     if not hrs:
-        hrs_candidates = [n for n in names if "óraszám" in n.lower() or "oraszam" in n.lower() or "nappal" in n.lower()]
+        hrs_candidates = [n for n in names if "nappal" in n.lower() or "óraszám" in n.lower() or "oraszam" in n.lower()]
         if hrs_candidates and len(hrs_candidates) >= day:
             hrs = hrs_candidates[day-1] if (day-1) < len(hrs_candidates) else hrs_candidates[-1]
 
@@ -418,6 +432,7 @@ def _auto_detect_fields(names: list[str], day: int) -> dict | None:
             "sign":    _make_day_template(sig, day),
         }
     return None
+
 
 class TaskHudWindow(QWidget):
     hotkey_pressed = pyqtSignal()
@@ -1185,7 +1200,7 @@ class TaskHudWindow(QWidget):
         try:
             reader = PdfReader(self._work_pdf_path)
             fields = reader.get_fields() or {}
-            names = sorted(fields.keys(), key=lambda s: str(s).lower())
+            names = list(fields.keys())
         except Exception as e:
             msg = QMessageBox(self)
             msg.setStyleSheet(_MSGBOX_QSS)
@@ -1223,10 +1238,13 @@ class TaskHudWindow(QWidget):
                 _save_defaults(self._defaults)
                 return True
 
+        # Ha manuálisan adja meg:
+        sorted_names = sorted(names, key=lambda s: str(s).lower())
+        
         a, ok = _FieldPickerDialog.pick(
             "Érkezés mező",
             f"Válaszd ki az ÉRKEZÉS mezőt\n(mai nap – {day}-e sora):",
-            names, self
+            sorted_names, self
         )
         if not ok or not a:
             return False
@@ -1234,23 +1252,62 @@ class TaskHudWindow(QWidget):
         l, ok = _FieldPickerDialog.pick(
             "Távozás mező",
             f"Válaszd ki a TÁVOZÁS mezőt\n(mai nap – {day}-e sora):",
-            names, self
+            sorted_names, self
         )
         if not ok or not l:
             return False
 
-        h, ok = _FieldPickerDialog.pick(
-            "Óraszám mező",
-            f"Válaszd ki az ÓRASZÁM / NAPPAL mezőt\n(mai nap – {day}-e sora):",
-            names, self
-        )
-        if not ok or not h:
-            return False
+        h = None
+        # Próbáljuk megkeresni név alapján a napi sorban
+        d = int(day)
+        row_re = re.compile(rf"(?i)row0*{d}(?!\d)")
+        under_re = re.compile(rf"(?<!\d)_0*{d}(?!\d)")
+        exact_re = re.compile(rf"(?<!\d)0*{d}(?!\d)")
+        day_fields = [n for n in names if row_re.search(n) or under_re.search(n) or exact_re.search(n)]
+
+        for n in day_fields:
+            nl = n.lower()
+            if ("óra" in nl or "ora" in nl or "nappal" in nl):
+                if not ("éj" in nl or "ej" in nl or "night" in nl) and not ("al" in nl and "r" in nl):
+                    h = n
+                    break
+
+        # Ha név alapján nem találta, nézzük a távozás utáni indexet
+        if not h and l in names:
+            idx = names.index(l)
+            for i in range(idx + 1, min(idx + 4, len(names))):
+                candidate = names[i]
+                cl = candidate.lower()
+                if candidate != a and "al" not in cl and "sign" not in cl and "éj" not in cl and "ej" not in cl and "night" not in cl:
+                    h = candidate
+                    break
+
+        if h:
+            msg = QMessageBox(self)
+            msg.setStyleSheet(_MSGBOX_QSS)
+            msg.setWindowTitle("Óraszám mező észlelve")
+            msg.setText(f"A rendszer ezt a NAPPALI óraszám mezőt találta:\n\n{h}\n\nElfogadod?")
+            msg.setIcon(QMessageBox.Icon.Question)
+            btn_yes = msg.addButton("Igen", QMessageBox.ButtonRole.YesRole)
+            btn_no = msg.addButton("Nem, kiválasztom kézzel", QMessageBox.ButtonRole.NoRole)
+            msg.exec()
+            
+            if msg.clickedButton() != btn_yes:
+                h = None
+
+        if not h:
+            h, ok = _FieldPickerDialog.pick(
+                "Óraszám mező",
+                f"Válaszd ki a NAPPALI ÓRASZÁM mezőt\n(mai nap – {day}-e sora):",
+                sorted_names, self
+            )
+            if not ok or not h:
+                return False
 
         sig, ok = _FieldPickerDialog.pick(
             "Aláírás mező",
             "Válaszd ki az ALÁÍRÁS mezőt:",
-            names, self
+            sorted_names, self
         )
         if not ok or not sig:
             return False
@@ -1264,6 +1321,7 @@ class TaskHudWindow(QWidget):
         self._defaults[_WORK_TPL_KEY] = self._work_tpl
         _save_defaults(self._defaults)
         return True
+
 
     def _on_work_button_clicked(self) -> None:
         if not _PYPDF_OK:
@@ -1328,12 +1386,18 @@ class TaskHudWindow(QWidget):
         leave_time    = _fmt_hhmm(_round_to_nearest_hour(end_dt))
         start_rounded = _round_to_nearest_hour(self._work_start_dt)
         end_rounded   = _round_to_nearest_hour(end_dt)
-        hours         = _safe_hours((end_rounded - start_rounded).total_seconds())
-        sign_name     = backend.get_my_display_name() or ""
+        
+        # Óraszám számítás
+        hours = _safe_hours((end_rounded - start_rounded).total_seconds())
+        
+        # Azonnal stringgé alakítjuk, és hagyjuk meg 0-nak, ha annyi jött ki
+        hours_str = str(hours)
+
+        sign_name = backend.get_my_display_name() or ""
 
         values = {
             leave_field: leave_time,
-            hours_field: str(hours),
+            hours_field: hours_str,
         }
 
         if sign_field and sign_name:
@@ -1343,7 +1407,7 @@ class TaskHudWindow(QWidget):
         if not ok:
             self.set_status_guarded(err_msg, kind="warn")
         else:
-            self.set_status_guarded(f"Munka vége: {leave_time}  ({hours} óra)", kind="ok", auto_clear_ms=2000)
+            self.set_status_guarded(f"Munka vége: {leave_time}  ({hours} óra)", kind="ok", auto_clear_ms=3000)
 
         self._work_running = False
         self._work_start_dt = None
@@ -1354,7 +1418,6 @@ class TaskHudWindow(QWidget):
         _save_defaults(self._defaults)
         self.btn_work.setText("Munka kezdete")
 
-    # ─────────────────────────────────────────────────────────────────────────
 
     def start_login_mainthread(self) -> None:
         self.btn_login.setDisabled(True)
