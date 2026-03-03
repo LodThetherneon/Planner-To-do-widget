@@ -54,7 +54,9 @@ def _load_cache_text():
     if not os.path.exists(CACHEFILE):
         return None
     try:
-        raw = open(CACHEFILE, "rb").read()
+        with open(CACHEFILE, "rb") as f:
+            raw = f.read()
+            
         if not raw:
             return None
         if os.name == "nt":
@@ -96,20 +98,21 @@ def _save_plan_cache(cache_data: dict) -> None:
         pass
 
 
+_TOKEN_CACHE = msal.SerializableTokenCache()
+_cache_text = _load_cache_text()
+if _cache_text:
+    _TOKEN_CACHE.deserialize(_cache_text)
+
+atexit.register(lambda: _save_cache_text(_TOKEN_CACHE.serialize()) if _TOKEN_CACHE.has_state_changed else None)
+
+
 def _msal_app_and_cache():
-    cache = msal.SerializableTokenCache()
-    cache_text = _load_cache_text()
-    if cache_text:
-        cache.deserialize(cache_text)
-
-    atexit.register(lambda: _save_cache_text(cache.serialize()) if cache.has_state_changed else None)
-
     app = msal.PublicClientApplication(
         config.CLIENT_ID,
         authority=f"https://login.microsoftonline.com/{config.TENANT_ID}",
-        token_cache=cache
+        token_cache=_TOKEN_CACHE
     )
-    return app, cache
+    return app, _TOKEN_CACHE
 
 
 def get_access_token_silent():
@@ -142,19 +145,31 @@ def get_access_token_interactive():
 
 
 def logout():
-    """Kijelentkezés: törli a DPAPI titkosított token cache fájlt."""
+    """Kijelentkezés: törli a fájlt és kiüríti a memória cache-t."""
+    success = True
+    
+    # 1. Töröljük a memóriában lévő összes accountot
+    try:
+        app, cache = _msal_app_and_cache()
+        accounts = app.get_accounts()
+        for account in accounts:
+            app.remove_account(account)
+    except Exception as e:
+        print(f"Memória cache törlési hiba: {e}")
+        success = False
+
+    # 2. Töröljük a fájlt is
     if os.path.exists(CACHEFILE):
         try:
             os.remove(CACHEFILE)
-            return True
         except Exception as e:
-            print(f"Logout hiba: {e}")
-            return False
-    return True
+            print(f"Logout fájl törlési hiba: {e}")
+            success = False
+            
+    return success
 
 
 def _planner_api_call(method: str, endpoint: str, payload=None, needs_etag=False):
-    """Közös segédfüggvény a Planner API hívásokhoz. Jelentősen csökkenti a kód ismétlődését."""
     token = get_access_token_silent()
     if not token:
         return False, "Nincs bejelentkezve", None
@@ -232,7 +247,6 @@ def list_my_plans():
     plan_cache = _load_plan_cache()
     cache_updated = False
 
-    # 1. Hivatalos végpont (csak a Kedvencek és a saját tulajdonú tervek jönnek le)
     ok_plans, msg_plans, res_plans = _planner_api_call("GET", "/me/planner/plans")
     if ok_plans and res_plans:
         for p in res_plans.json().get("value", []):
@@ -240,23 +254,18 @@ def list_my_plans():
             title = p.get("title", "")
             if pid:
                 plans_dict[pid] = {"id": pid, "title": title}
-                # Ha új nevet találunk vagy még nem volt a cache-ben, frissítsük
                 if plan_cache.get(pid) != title:
                     plan_cache[pid] = title
                     cache_updated = True
 
-    # 2. Biztonsági háló: Kigyűjtjük a Plan ID-kat a user meglévő feladataiból
     ok_tasks, msg_tasks, res_tasks = _planner_api_call("GET", "/me/planner/tasks")
     if ok_tasks and res_tasks:
         for t in res_tasks.json().get("value", []):
             pid = t.get("planId")
-            # Ha a feladat egy olyan tervhez tartozik, ami eddig nem volt a hivatalos listában:
             if pid and pid not in plans_dict:
-                # 3. Ellenőrizzük a helyi gyorsítótárat (cache), hogy spóroljunk egy API hívást
                 if pid in plan_cache:
                     plans_dict[pid] = {"id": pid, "title": plan_cache[pid]}
                 else:
-                    # Ha nincs meg a cache-ben sem, csak akkor hívjuk a Graph API-t egyedileg
                     ok_single, msg_single, res_single = _planner_api_call("GET", f"/planner/plans/{pid}")
                     if ok_single and res_single:
                         p_data = res_single.json()
@@ -265,7 +274,6 @@ def list_my_plans():
                         plan_cache[pid] = title
                         cache_updated = True
 
-    # Kimentjük a frissített cache-t, ha volt változás
     if cache_updated:
         _save_plan_cache(plan_cache)
 

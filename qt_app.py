@@ -356,7 +356,6 @@ class TaskHudWindow(QWidget):
         self._global_edit_mode = False
         self._pending_saves = 0
         self._save_errors = []
-        self._jobs = []
 
         self._startup_banner_active = True
         self._hotkey_banner_active = False
@@ -425,9 +424,9 @@ class TaskHudWindow(QWidget):
         self.content_layout.setSpacing(10)
 
         self.login_row = QWidget()
-        lr = QHBoxLayout(self.login_row)
-        lr.setContentsMargins(0, 0, 0, 0)
-        lr.setSpacing(10)
+        self.lr = QHBoxLayout(self.login_row)
+        self.lr.setContentsMargins(0, 0, 0, 0)
+        self.lr.setSpacing(10)
 
         self._btn_stack = QStackedWidget()
         self._btn_stack.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
@@ -455,9 +454,9 @@ class TaskHudWindow(QWidget):
         self.btn_edit_all.setVisible(False)
         self.btn_edit_all.clicked.connect(self._on_edit_all_clicked)
 
-        lr.addWidget(self._btn_stack, 0)
-        lr.addWidget(self.btn_work, 0)
-        lr.addWidget(self.btn_edit_all, 0)
+        self.lr.addWidget(self._btn_stack, 0)
+        self.lr.addWidget(self.btn_work, 0)
+        self.lr.addWidget(self.btn_edit_all, 0)
 
         self.content_layout.addWidget(self.login_row)
 
@@ -977,20 +976,27 @@ class TaskHudWindow(QWidget):
         self.btn_reset_pdf.setVisible(True)
         self.btn_work.setDisabled(not _PYPDF_OK)
         self.add_toggle.setVisible(True)
+        self.lr.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
     def _update_ui_for_logged_out(self) -> None:
         self._btn_stack.setCurrentIndex(0)
         self.btn_edit_all.setVisible(False)
         self.btn_work.setVisible(False)
         self.btn_reset_pdf.setVisible(False)
-        self.lbl_hint.setText("Kérlek jelentkezz be")
-        self._clear_task_widgets()
+        self.lbl_hint.setText("Kérlek jelentkezz be, v1.05")
+        
+        # Nullázzuk a memóriát
         self._last_tasks = []
+        self._last_counts_active = None
+        self._last_counts_expired = None
+        self._clear_task_widgets()
+        
         self.add_toggle.setVisible(False)
         self.add_panel.setVisible(False)
         self.header.set_text("Nincs bejelentkezve")
         self.btn_work.setText("Munka kezdete")
         self.header.set_work_minutes(None)
+        self.lr.setAlignment(Qt.AlignmentFlag.AlignLeft)
 
     def _reset_work_pdf(self) -> None:
         if self._work_running:
@@ -1482,8 +1488,7 @@ class TaskHudWindow(QWidget):
         due_arg = None if not due else due
 
         self.set_status_guarded("Létrehozás...", kind="info")
-        job = start_action("create_task", (title, bucket_id, plan_id, due_arg), self._on_action_finished_create)
-        self._jobs.append(job)
+        start_action("create_task", (title, bucket_id, plan_id, due_arg), self._on_action_finished_create)
 
     def _on_action_finished_create(self, ok: bool, msg: str) -> None:
         if not ok:
@@ -1505,8 +1510,7 @@ class TaskHudWindow(QWidget):
 
         self._busy_guard.start(BUSY_GUARD_MS)
 
-        job = start_fetch(lambda data: self._on_fetched(data, skip_intro))
-        self._jobs.append(job)
+        start_fetch(lambda data: self._on_fetched(data, skip_intro))
 
     def _on_fetched(self, data, skip_intro: bool) -> None:
         try:
@@ -1697,32 +1701,40 @@ class TaskHudWindow(QWidget):
     def _on_done(self, task_id: str, title: str) -> None:
         if not self._startup_banner_active and not self._hotkey_banner_active:
             self.header.set_text("Frissítés...")
-        job = start_action(
-            "complete_task", (task_id, title),
-            lambda ok, msg: (play_sound(COMPLETESOUND), self.start_refresh(skip_intro=True))
-            if ok else self.set_status_guarded(msg or "Sikertelen", kind="error", auto_clear_ms=3000)
-        )
-        self._jobs.append(job)
+        
+        def _cb(ok: bool, msg: str):
+            if ok:
+                play_sound(COMPLETESOUND)
+                self.start_refresh(skip_intro=True)
+            else:
+                self.set_status_guarded(msg or "Sikertelen", kind="error", auto_clear_ms=3000)
+                
+        start_action("complete_task", (task_id, title), _cb)
 
     def _on_reopen(self, task_id: str, title: str) -> None:
         if not self._startup_banner_active and not self._hotkey_banner_active:
             self.header.set_text("Frissítés...")
-        job = start_action(
-            "reopen_task", (task_id, title),
-            lambda ok, msg: (play_sound(REOPENSOUND), self.start_refresh(skip_intro=True))
-            if ok else self.set_status_guarded(msg or "Sikertelen", kind="error", auto_clear_ms=3000)
-        )
-        self._jobs.append(job)
+            
+        def _cb(ok: bool, msg: str):
+            if ok:
+                play_sound(REOPENSOUND)
+                self.start_refresh(skip_intro=True)
+            else:
+                self.set_status_guarded(msg or "Sikertelen", kind="error", auto_clear_ms=3000)
+                
+        start_action("reopen_task", (task_id, title), _cb)
 
     def _on_delete(self, task_id: str, title: str) -> None:
         if not self._startup_banner_active and not self._hotkey_banner_active:
             self.header.set_text("Törlés...")
-        job = start_action(
-            "delete_task", (task_id,),
-            lambda ok, msg: self.start_refresh(skip_intro=True)
-            if ok else self.set_status_guarded(msg or "Törlés sikertelen", kind="error", auto_clear_ms=3000)
-        )
-        self._jobs.append(job)
+            
+        def _cb(ok: bool, msg: str):
+            if ok:
+                self.start_refresh(skip_intro=True)
+            else:
+                self.set_status_guarded(msg or "Törlés sikertelen", kind="error", auto_clear_ms=3000)
+                
+        start_action("delete_task", (task_id,), _cb)
 
     def _on_edit_all_clicked(self) -> None:
         if not self._global_edit_mode:
@@ -1778,7 +1790,7 @@ class TaskHudWindow(QWidget):
                 card = item.widget()
                 if card.task.status == "FOLYAMATBAN" and card.has_changes():
                     if not card.is_date_valid():
-                        self.set_status_guarded(f"Hibás dátum!", kind="error", auto_clear_ms=3000)
+                        self.set_status_guarded("Hibás dátum!", kind="error", auto_clear_ms=3000)
                         card.edit_date.setStyleSheet("border: 1px solid red;")
                         return
                     cards_to_save.append(card)
@@ -1796,11 +1808,10 @@ class TaskHudWindow(QWidget):
 
         for card in cards_to_save:
             t_val, d_val = card.get_changes()
-            job = start_action(
+            start_action(
                 "update_task_details", (card.task.id, t_val, d_val),
                 lambda ok, msg, c=card: self._on_single_save_done(ok, msg, c)
             )
-            self._jobs.append(job)
 
     def _on_single_save_done(self, ok: bool, msg: str, card: TaskCard) -> None:
         self._pending_saves -= 1
