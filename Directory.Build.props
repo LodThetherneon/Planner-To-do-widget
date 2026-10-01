@@ -1,0 +1,23 @@
+<Project>
+  <!--
+    Közös beállítások minden projekthez.
+    A build kimenet (bin/obj) szándékosan NEM a OneDrive-os forrásmappába kerül:
+    a szinkronizálás zárolná a fájlokat és fölöslegesen feltöltene több ezer generált fájlt.
+  -->
+  <PropertyGroup>
+    <UseArtifactsOutput>true</UseArtifactsOutput>
+    <ArtifactsPath>$(LOCALAPPDATA)\PlannerWidget.Build</ArtifactsPath>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Product>Planner Widget</Product>
+    <Company>Planner Widget</Company>
+    <Copyright>© 2026</Copyright>
+    <Version>3.0.0</Version>
+    <NeutralLanguage>hu-HU</NeutralLanguage>
+    <SatelliteResourceLanguages>hu;en</SatelliteResourceLanguages>
+  </PropertyGroup>
+</Project>

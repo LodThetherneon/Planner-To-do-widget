@@ -1,0 +1,480 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="PlannerWidget.App.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:PlannerWidget.App"
+    xmlns:vm="using:PlannerWidget.App.ViewModels"
+    Title="Planner Widget">
+
+    <Grid x:Name="RootGrid" RowDefinitions="Auto,*">
+        <Grid.KeyboardAccelerators>
+            <KeyboardAccelerator Key="F5" Invoked="OnRefreshAccelerator" />
+            <KeyboardAccelerator Key="N" Modifiers="Control" Invoked="OnNewTaskAccelerator" />
+            <KeyboardAccelerator Key="F" Modifiers="Control" Invoked="OnSearchAccelerator" />
+            <KeyboardAccelerator Key="Escape" Invoked="OnEscapeAccelerator" />
+        </Grid.KeyboardAccelerators>
+
+        <Grid.Resources>
+            <!-- Feladatkártya -->
+            <DataTemplate x:Key="TaskTemplate" x:DataType="vm:TaskItemViewModel">
+                <Grid Margin="0,0,0,6"
+                      CornerRadius="8"
+                      BorderThickness="1"
+                      BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                      Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                      ColumnDefinitions="4,Auto,*,Auto"
+                      RowDefinitions="Auto,Auto">
+
+                    <Border Grid.RowSpan="2"
+                            CornerRadius="7,0,0,7"
+                            Background="{x:Bind local:Ui.Accent(DueState), Mode=OneWay}" />
+
+                    <Button Grid.Column="1"
+                            Margin="4,6,0,0"
+                            VerticalAlignment="Top"
+                            Style="{StaticResource CheckButtonStyle}"
+                            Command="{x:Bind ToggleCompleteCommand}"
+                            Content="{x:Bind local:Ui.CheckGlyph(IsCompleted), Mode=OneWay}"
+                            Foreground="{x:Bind local:Ui.CheckBrush(IsCompleted), Mode=OneWay}"
+                            IsEnabled="{x:Bind local:Ui.Not(IsBusy), Mode=OneWay}"
+                            ToolTipService.ToolTip="{x:Bind CheckToolTip, Mode=OneWay}"
+                            AutomationProperties.Name="{x:Bind CheckToolTip, Mode=OneWay}" />
+
+                    <!-- Cím és adatok: koppintásra kinyílnak a részletek -->
+                    <StackPanel Grid.Column="2"
+                                Padding="4,11,4,10"
+                                Spacing="5"
+                                Background="Transparent"
+                                Tapped="{x:Bind OnTapped}">
+                        <TextBlock Text="{x:Bind Title, Mode=OneWay}"
+                                   FontWeight="SemiBold"
+                                   TextWrapping="WrapWholeWords"
+                                   MaxLines="3"
+                                   TextTrimming="CharacterEllipsis"
+                                   Opacity="{x:Bind local:Ui.TitleOpacity(IsCompleted), Mode=OneWay}"
+                                   TextDecorations="{x:Bind local:Ui.Strike(IsCompleted), Mode=OneWay}" />
+
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <Border Style="{StaticResource PillStyle}"
+                                    Padding="6,1,7,2"
+                                    Background="{x:Bind local:Ui.DueBackground(DueState), Mode=OneWay}"
+                                    ToolTipService.ToolTip="{x:Bind DueToolTip, Mode=OneWay}">
+                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                    <FontIcon Glyph="&#xE787;" FontSize="11"
+                                              Foreground="{x:Bind local:Ui.DueForeground(DueState), Mode=OneWay}" />
+                                    <TextBlock Text="{x:Bind DueText, Mode=OneWay}" FontSize="12"
+                                               Foreground="{x:Bind local:Ui.DueForeground(DueState), Mode=OneWay}" />
+                                </StackPanel>
+                            </Border>
+
+                            <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center"
+                                        Visibility="{x:Bind local:Ui.PriorityVisibility(Priority, IsCompleted), Mode=OneWay}">
+                                <FontIcon Glyph="&#xE7C1;" FontSize="11" Foreground="{x:Bind local:Ui.PriorityBrush(Priority), Mode=OneWay}" />
+                                <TextBlock Text="{x:Bind PriorityText, Mode=OneWay}" FontSize="12"
+                                           Foreground="{x:Bind local:Ui.PriorityBrush(Priority), Mode=OneWay}" />
+                            </StackPanel>
+
+                            <StackPanel Orientation="Horizontal" Spacing="4" VerticalAlignment="Center"
+                                        Visibility="{x:Bind HasChecklist, Mode=OneWay}"
+                                        ToolTipService.ToolTip="Ellenőrzőlista">
+                                <FontIcon Glyph="&#xE9D5;" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock Text="{x:Bind ChecklistText, Mode=OneWay}" Style="{StaticResource CaptionTextStyle}" />
+                            </StackPanel>
+
+                            <FontIcon Glyph="&#xE8A5;" FontSize="11" VerticalAlignment="Center"
+                                      Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                      Visibility="{x:Bind HasDescription, Mode=OneWay}"
+                                      ToolTipService.ToolTip="Van leírása" />
+                        </StackPanel>
+
+                        <TextBlock Text="{x:Bind PlanTitle, Mode=OneWay}"
+                                   Style="{StaticResource CaptionTextStyle}"
+                                   FontSize="11"
+                                   TextTrimming="CharacterEllipsis"
+                                   Visibility="{x:Bind local:Ui.VisibleIfText(PlanTitle), Mode=OneWay}" />
+                    </StackPanel>
+
+                    <Grid Grid.Column="3" Margin="0,6,4,0" VerticalAlignment="Top">
+                        <ProgressRing Width="16" Height="16" IsActive="{x:Bind IsBusy, Mode=OneWay}"
+                                      Visibility="{x:Bind IsBusy, Mode=OneWay}" />
+                        <Button Style="{StaticResource IconButtonStyle}"
+                                Content="&#xE712;"
+                                Visibility="{x:Bind local:Ui.Collapsed(IsBusy), Mode=OneWay}"
+                                ToolTipService.ToolTip="Műveletek"
+                                AutomationProperties.Name="Műveletek">
+                            <Button.Flyout>
+                                <MenuFlyout Placement="BottomEdgeAlignedRight">
+                                    <MenuFlyoutItem Text="Szerkesztés…" Command="{x:Bind EditCommand}">
+                                        <MenuFlyoutItem.Icon>
+                                            <FontIcon Glyph="&#xE70F;" />
+                                        </MenuFlyoutItem.Icon>
+                                    </MenuFlyoutItem>
+                                    <MenuFlyoutItem Text="Részletek" Command="{x:Bind ToggleDetailsCommand}">
+                                        <MenuFlyoutItem.Icon>
+                                            <FontIcon Glyph="&#xE946;" />
+                                        </MenuFlyoutItem.Icon>
+                                    </MenuFlyoutItem>
+                                    <MenuFlyoutItem Text="Megnyitás a Plannerben" Command="{x:Bind OpenCommand}">
+                                        <MenuFlyoutItem.Icon>
+                                            <FontIcon Glyph="&#xE8A7;" />
+                                        </MenuFlyoutItem.Icon>
+                                    </MenuFlyoutItem>
+                                    <MenuFlyoutSeparator />
+                                    <MenuFlyoutItem Text="Törlés" Command="{x:Bind DeleteCommand}" Foreground="{x:Bind local:Ui.RedBrush}">
+                                        <MenuFlyoutItem.Icon>
+                                            <FontIcon Glyph="&#xE74D;" Foreground="{x:Bind local:Ui.RedBrush}" />
+                                        </MenuFlyoutItem.Icon>
+                                    </MenuFlyoutItem>
+                                </MenuFlyout>
+                            </Button.Flyout>
+                        </Button>
+                    </Grid>
+
+                    <!-- Részletek: leírás, ellenőrzőlista -->
+                    <StackPanel Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3"
+                                Margin="12,0,12,12"
+                                Spacing="6"
+                                Visibility="{x:Bind IsExpanded, Mode=OneWay}">
+                        <ProgressBar IsIndeterminate="True" Visibility="{x:Bind IsLoadingDetails, Mode=OneWay}" />
+                        <TextBlock Text="{x:Bind Description, Mode=OneWay}"
+                                   TextWrapping="Wrap"
+                                   IsTextSelectionEnabled="True"
+                                   Style="{StaticResource CaptionTextStyle}"
+                                   Visibility="{x:Bind HasDescriptionText, Mode=OneWay}" />
+                        <ItemsRepeater ItemsSource="{x:Bind Checklist}">
+                            <ItemsRepeater.ItemTemplate>
+                                <DataTemplate x:DataType="vm:ChecklistItemViewModel">
+                                    <CheckBox Content="{x:Bind Title}"
+                                              MinHeight="28"
+                                              Padding="6,4,0,0"
+                                              IsChecked="{x:Bind IsChecked, Mode=TwoWay}"
+                                              IsEnabled="{x:Bind local:Ui.Not(IsBusy), Mode=OneWay}" />
+                                </DataTemplate>
+                            </ItemsRepeater.ItemTemplate>
+                        </ItemsRepeater>
+                        <TextBlock Text="Ennek a feladatnak nincs leírása vagy ellenőrzőlistája."
+                                   Style="{StaticResource CaptionTextStyle}"
+                                   Visibility="{x:Bind HasNoDetails, Mode=OneWay}" />
+                        <HyperlinkButton Padding="0" Command="{x:Bind OpenCommand}">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <FontIcon Glyph="&#xE8A7;" FontSize="12" />
+                                <TextBlock Text="Megnyitás a Plannerben" FontSize="12" />
+                            </StackPanel>
+                        </HyperlinkButton>
+                    </StackPanel>
+                </Grid>
+            </DataTemplate>
+        </Grid.Resources>
+
+        <!-- ================= FEJLÉC ================= -->
+        <Grid x:Name="HeaderGrid" Height="48" Padding="14,0,6,0" ColumnDefinitions="*,Auto">
+            <Grid x:Name="DragRegion" Background="Transparent">
+                <StackPanel x:Name="HeaderContent" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" HorizontalAlignment="Left">
+                    <Image Source="ms-appx:///Assets/AppIcon.png" Width="18" Height="18" VerticalAlignment="Center" />
+
+                    <TextBlock Text="{x:Bind ViewModel.StatusMessage, Mode=OneWay}"
+                               Visibility="{x:Bind ViewModel.HasStatus, Mode=OneWay}"
+                               Foreground="{x:Bind local:Ui.StatusBrush(ViewModel.StatusKind), Mode=OneWay}"
+                               FontWeight="SemiBold"
+                               MaxWidth="196"
+                               TextTrimming="CharacterEllipsis"
+                               ToolTipService.ToolTip="{x:Bind ViewModel.StatusMessage, Mode=OneWay}"
+                               VerticalAlignment="Center" />
+
+                    <StackPanel Orientation="Horizontal" Spacing="6"
+                                Visibility="{x:Bind local:Ui.Collapsed(ViewModel.HasStatus), Mode=OneWay}">
+                        <TextBlock Text="{x:Bind ViewModel.HeaderTitle, Mode=OneWay}"
+                                   FontWeight="SemiBold" FontSize="14" VerticalAlignment="Center" />
+                        <Border Style="{StaticResource PillStyle}" Background="{x:Bind local:Ui.RedSoftBrush}"
+                                Visibility="{x:Bind ViewModel.HasOverdue, Mode=OneWay}">
+                            <TextBlock Text="{x:Bind ViewModel.OverdueText, Mode=OneWay}" FontSize="12" FontWeight="SemiBold"
+                                       Foreground="{x:Bind local:Ui.RedBrush}" />
+                        </Border>
+                        <Border x:Name="TodayPill" Style="{StaticResource PillStyle}" Background="{x:Bind local:Ui.AmberSoftBrush}">
+                            <TextBlock Text="{x:Bind ViewModel.DueTodayText, Mode=OneWay}" FontSize="12" FontWeight="SemiBold"
+                                       Foreground="{x:Bind local:Ui.AmberBrush}" />
+                        </Border>
+                    </StackPanel>
+
+                    <Border x:Name="WorkPill" Style="{StaticResource PillStyle}" Background="{x:Bind local:Ui.BlueSoftBrush}"
+                            Visibility="Collapsed"
+                            ToolTipService.ToolTip="{x:Bind ViewModel.WorkToolTip, Mode=OneWay}">
+                        <StackPanel Orientation="Horizontal" Spacing="4">
+                            <FontIcon Glyph="&#xE916;" FontSize="11" Foreground="{x:Bind local:Ui.BlueBrush}" />
+                            <TextBlock Text="{x:Bind ViewModel.WorkElapsedText, Mode=OneWay}" FontSize="12" FontWeight="SemiBold"
+                                       Foreground="{x:Bind local:Ui.BlueBrush}" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </Grid>
+
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button x:Name="CompactButton"
+                        Style="{StaticResource IconButtonStyle}"
+                        Click="OnCompactClick"
+                        ToolTipService.ToolTip="Összecsukás oldalra"
+                        AutomationProperties.Name="Összecsukás oldalra" />
+                <StackPanel x:Name="FullHeaderButtons" Orientation="Horizontal">
+                    <Grid Width="32" Height="32">
+                        <Button Style="{StaticResource IconButtonStyle}"
+                                Content="&#xE72C;"
+                                Command="{x:Bind ViewModel.RefreshCommand}"
+                                Visibility="{x:Bind local:Ui.Collapsed(ViewModel.IsBusy), Mode=OneWay}"
+                                ToolTipService.ToolTip="Frissítés (F5)"
+                                AutomationProperties.Name="Frissítés" />
+                        <ProgressRing Width="16" Height="16"
+                                      IsActive="{x:Bind ViewModel.IsBusy, Mode=OneWay}"
+                                      Visibility="{x:Bind ViewModel.IsBusy, Mode=OneWay}" />
+                    </Grid>
+                    <Button x:Name="ExpandButton"
+                            Style="{StaticResource IconButtonStyle}"
+                            Click="OnExpandClick"
+                            ToolTipService.ToolTip="Kinyitás / becsukás"
+                            AutomationProperties.Name="Kinyitás vagy becsukás" />
+                    <Button Style="{StaticResource CloseButtonStyle}"
+                            Content="&#xE8BB;"
+                            Click="OnCloseClick"
+                            ToolTipService.ToolTip="Bezárás"
+                            AutomationProperties.Name="Bezárás" />
+                </StackPanel>
+            </StackPanel>
+        </Grid>
+
+        <!-- ================= TARTALOM ================= -->
+        <Grid x:Name="ContentRoot"
+              Grid.Row="1"
+              RowDefinitions="Auto,*"
+              Background="{ThemeResource LayerFillColorDefaultBrush}"
+              BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+              BorderThickness="0,1,0,0">
+
+            <InfoBar Margin="12,10,12,0"
+                     IsOpen="{x:Bind ViewModel.IsErrorOpen, Mode=TwoWay}"
+                     Title="{x:Bind ViewModel.ErrorTitle, Mode=OneWay}"
+                     Message="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
+                     Severity="{x:Bind local:Ui.Severity(ViewModel.ErrorSeverity), Mode=OneWay}" />
+
+            <!-- Kijelentkezett állapot -->
+            <StackPanel Grid.Row="1"
+                        Visibility="{x:Bind ViewModel.IsSignedOut, Mode=OneWay}"
+                        VerticalAlignment="Center"
+                        HorizontalAlignment="Center"
+                        MaxWidth="300"
+                        Padding="24"
+                        Spacing="14">
+                <Image Source="ms-appx:///Assets/AppIcon.png" Width="72" Height="72" />
+                <TextBlock Text="Planner Widget" Style="{StaticResource SubtitleTextBlockStyle}" HorizontalAlignment="Center" />
+                <TextBlock Text="Jelentkezz be a munkahelyi Microsoft 365-fiókoddal, és a Planner-feladataid itt jelennek meg."
+                           TextWrapping="Wrap" TextAlignment="Center"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <Button Style="{StaticResource AccentButtonStyle}"
+                        HorizontalAlignment="Center"
+                        MinWidth="170"
+                        AutomationProperties.Name="{x:Bind ViewModel.SignInButtonText, Mode=OneWay}"
+                        Command="{x:Bind ViewModel.SignInCommand}">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <ProgressRing Width="14" Height="14"
+                                      IsActive="{x:Bind ViewModel.IsSigningIn, Mode=OneWay}"
+                                      Visibility="{x:Bind ViewModel.IsSigningIn, Mode=OneWay}" />
+                        <TextBlock Text="{x:Bind ViewModel.SignInButtonText, Mode=OneWay}" />
+                    </StackPanel>
+                </Button>
+                <TextBlock Text="{x:Bind ViewModel.HotkeyHint, Mode=OneWay}"
+                           Style="{StaticResource CaptionTextStyle}"
+                           HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" />
+            </StackPanel>
+
+            <!-- Bejelentkezett állapot -->
+            <Grid Grid.Row="1"
+                  Visibility="{x:Bind ViewModel.IsSignedIn, Mode=OneWay}"
+                  RowDefinitions="Auto,Auto,Auto,*">
+
+                <!-- Eszköztár -->
+                <Grid Padding="12,10,8,8" ColumnDefinitions="Auto,*,Auto,Auto,Auto" ColumnSpacing="6">
+                    <PersonPicture Width="32" Height="32"
+                                   Initials="{x:Bind ViewModel.UserInitials, Mode=OneWay}"
+                                   DisplayName="{x:Bind ViewModel.UserDisplayName, Mode=OneWay}" />
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="4,0,0,0">
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6" HorizontalAlignment="Left">
+                            <TextBlock Text="{x:Bind ViewModel.UserDisplayName, Mode=OneWay}"
+                                       FontWeight="SemiBold" FontSize="13" TextTrimming="CharacterEllipsis" />
+                            <Border Grid.Column="1" Style="{StaticResource PillStyle}" Padding="5,0,5,1"
+                                    Background="{x:Bind local:Ui.BlueSoftBrush}"
+                                    Visibility="{x:Bind ViewModel.IsDemo}"
+                                    ToolTipService.ToolTip="Bemutató mód: kitalált adatok, semmi nem kerül a Plannerbe.">
+                                <TextBlock Text="BEMUTATÓ" FontSize="10" FontWeight="SemiBold" Foreground="{x:Bind local:Ui.BlueBrush}" />
+                            </Border>
+                        </Grid>
+                        <TextBlock Text="{x:Bind ViewModel.LastRefreshText, Mode=OneWay}"
+                                   Style="{StaticResource CaptionTextStyle}" FontSize="11" />
+                    </StackPanel>
+
+                    <Button Grid.Column="2"
+                            Style="{StaticResource ToolbarButtonStyle}"
+                            Command="{x:Bind ViewModel.ToggleWorkCommand}"
+                            IsEnabled="{x:Bind local:Ui.Not(ViewModel.IsWorkBusy), Mode=OneWay}"
+                            AutomationProperties.Name="{x:Bind ViewModel.WorkButtonText, Mode=OneWay}"
+                            ToolTipService.ToolTip="{x:Bind ViewModel.WorkToolTip, Mode=OneWay}">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon Glyph="{x:Bind ViewModel.WorkButtonGlyph, Mode=OneWay}" FontSize="12" />
+                            <TextBlock Text="{x:Bind ViewModel.WorkButtonLabel, Mode=OneWay}" FontSize="12" />
+                        </StackPanel>
+                    </Button>
+
+                    <Button Grid.Column="3"
+                            Style="{StaticResource IconButtonStyle}"
+                            Content="&#xE710;"
+                            Command="{x:Bind ViewModel.ToggleAddPanelCommand}"
+                            ToolTipService.ToolTip="Új feladat (Ctrl+N)"
+                            AutomationProperties.Name="Új feladat" />
+
+                    <Button Grid.Column="4"
+                            Style="{StaticResource IconButtonStyle}"
+                            Content="&#xE712;"
+                            ToolTipService.ToolTip="Továbbiak"
+                            AutomationProperties.Name="Továbbiak">
+                        <Button.Flyout>
+                            <MenuFlyout Placement="BottomEdgeAlignedRight">
+                                <MenuFlyoutItem Text="Megnyitás a Plannerben" Command="{x:Bind ViewModel.OpenPlannerCommand}">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE8A7;" />
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                                <MenuFlyoutItem Text="Beállítások…" Click="OnSettingsClick">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE713;" />
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                                <MenuFlyoutSeparator />
+                                <MenuFlyoutItem Text="Kijelentkezés" Command="{x:Bind ViewModel.SignOutCommand}">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xF3B1;" />
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                                <MenuFlyoutItem Text="Kilépés" Click="OnQuitClick">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE7E8;" />
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                            </MenuFlyout>
+                        </Button.Flyout>
+                    </Button>
+                </Grid>
+
+                <!-- Új feladat -->
+                <Border Grid.Row="1"
+                        Margin="12,0,12,10"
+                        Padding="12"
+                        CornerRadius="8"
+                        BorderThickness="1"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        Visibility="{x:Bind ViewModel.IsAddPanelOpen, Mode=OneWay}">
+                    <StackPanel Spacing="8">
+                        <TextBox x:Name="NewTaskTitleBox"
+                                 PlaceholderText="Új feladat címe…"
+                                 Text="{x:Bind ViewModel.NewTaskTitle, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 KeyDown="OnNewTaskTitleKeyDown" />
+                        <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
+                            <ComboBox HorizontalAlignment="Stretch"
+                                      PlaceholderText="Terv"
+                                      ItemsSource="{x:Bind ViewModel.AddPlans}"
+                                      SelectedItem="{x:Bind ViewModel.NewTaskPlan, Mode=TwoWay}"
+                                      ToolTipService.ToolTip="Terv" />
+                            <ComboBox Grid.Column="1"
+                                      HorizontalAlignment="Stretch"
+                                      PlaceholderText="Oszlop"
+                                      ItemsSource="{x:Bind ViewModel.AddBuckets}"
+                                      SelectedItem="{x:Bind ViewModel.NewTaskBucket, Mode=TwoWay}"
+                                      ToolTipService.ToolTip="Oszlop (bucket) – az utoljára választottat megjegyzi" />
+                        </Grid>
+                        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="4">
+                            <CalendarDatePicker HorizontalAlignment="Stretch"
+                                                PlaceholderText="Nincs határidő"
+                                                FirstDayOfWeek="Monday"
+                                                Date="{x:Bind ViewModel.NewTaskDue, Mode=TwoWay}" />
+                            <Button Grid.Column="1"
+                                    Style="{StaticResource IconButtonStyle}"
+                                    Content="&#xE711;"
+                                    FontSize="11"
+                                    Command="{x:Bind ViewModel.ClearNewTaskDueCommand}"
+                                    ToolTipService.ToolTip="Határidő törlése"
+                                    AutomationProperties.Name="Határidő törlése" />
+                            <ComboBox Grid.Column="2"
+                                      Margin="4,0,0,0"
+                                      Width="108"
+                                      ItemsSource="{x:Bind vm:MainViewModel.PriorityOptions}"
+                                      SelectedIndex="{x:Bind ViewModel.NewTaskPriorityIndex, Mode=TwoWay}"
+                                      ToolTipService.ToolTip="Prioritás" />
+                        </Grid>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+                            <ProgressRing Width="16" Height="16"
+                                          IsActive="{x:Bind ViewModel.IsLoadingBuckets, Mode=OneWay}"
+                                          Visibility="{x:Bind ViewModel.IsLoadingBuckets, Mode=OneWay}" />
+                            <Button Content="Mégse" Command="{x:Bind ViewModel.ToggleAddPanelCommand}" />
+                            <Button Style="{StaticResource AccentButtonStyle}" Command="{x:Bind ViewModel.AddTaskCommand}"
+                                    AutomationProperties.Name="Hozzáadás">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <ProgressRing Width="14" Height="14"
+                                                  IsActive="{x:Bind ViewModel.IsAdding, Mode=OneWay}"
+                                                  Visibility="{x:Bind ViewModel.IsAdding, Mode=OneWay}" />
+                                    <TextBlock Text="Hozzáadás" />
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- Keresés és szűrés -->
+                <Grid Grid.Row="2" Margin="12,0,12,8" ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                    <TextBox x:Name="SearchBox"
+                             PlaceholderText="Keresés… (Ctrl+F)"
+                             Text="{x:Bind ViewModel.SearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                    <ComboBox Grid.Column="1"
+                              MaxWidth="150"
+                              ItemsSource="{x:Bind ViewModel.PlanFilterOptions}"
+                              SelectedItem="{x:Bind ViewModel.SelectedPlanFilter, Mode=TwoWay}"
+                              ToolTipService.ToolTip="Szűrés tervre" />
+                </Grid>
+
+                <!-- Feladatlista -->
+                <ScrollViewer x:Name="TaskScroller" Grid.Row="3" Padding="12,0,12,12" VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
+                        <ItemsRepeater ItemsSource="{x:Bind ViewModel.ActiveTasks}" ItemTemplate="{StaticResource TaskTemplate}" />
+
+                        <TextBlock Margin="12,24"
+                                   Text="{x:Bind ViewModel.EmptyText, Mode=OneWay}"
+                                   TextWrapping="Wrap"
+                                   TextAlignment="Center"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   Visibility="{x:Bind ViewModel.HasNoActiveTasks, Mode=OneWay}" />
+
+                        <Expander Margin="0,6,0,0"
+                                  HorizontalAlignment="Stretch"
+                                  HorizontalContentAlignment="Stretch"
+                                  Header="{x:Bind ViewModel.CompletedHeader, Mode=OneWay}"
+                                  IsExpanded="{x:Bind ViewModel.IsCompletedExpanded, Mode=TwoWay}"
+                                  Visibility="{x:Bind ViewModel.HasCompleted, Mode=OneWay}">
+                            <StackPanel Spacing="6">
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="10"
+                                            Visibility="{x:Bind ViewModel.HasMultiplePages, Mode=OneWay}">
+                                    <Button Style="{StaticResource IconButtonStyle}" Content="&#xE76B;"
+                                            Command="{x:Bind ViewModel.PreviousPageCommand}"
+                                            IsEnabled="{x:Bind ViewModel.CanGoPrevious, Mode=OneWay}"
+                                            AutomationProperties.Name="Előző oldal" />
+                                    <TextBlock Text="{x:Bind ViewModel.PageText, Mode=OneWay}" VerticalAlignment="Center" FontWeight="SemiBold" />
+                                    <Button Style="{StaticResource IconButtonStyle}" Content="&#xE76C;"
+                                            Command="{x:Bind ViewModel.NextPageCommand}"
+                                            IsEnabled="{x:Bind ViewModel.CanGoNext, Mode=OneWay}"
+                                            AutomationProperties.Name="Következő oldal" />
+                                </StackPanel>
+                                <ItemsRepeater ItemsSource="{x:Bind ViewModel.CompletedPageTasks}" ItemTemplate="{StaticResource TaskTemplate}" />
+                            </StackPanel>
+                        </Expander>
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+        </Grid>
+    </Grid>
+</Window>

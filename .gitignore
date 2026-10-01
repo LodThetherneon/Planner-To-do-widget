@@ -1,0 +1,14 @@
+# Build kimenet (alapból a %LOCALAPPDATA%\PlannerWidget.Build alá kerül, de biztos, ami biztos)
+bin/
+obj/
+artifacts/
+*.user
+*.suo
+.vs/
+.vscode/*
+!.vscode/extensions.json
+TestResults/
+
+# Soha ne kerüljenek verziókezelésbe
+*.cache
+*.pdf
