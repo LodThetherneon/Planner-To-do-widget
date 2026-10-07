@@ -1,0 +1,268 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Window
+    x:Class="PlannerWidget.App.SettingsWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:PlannerWidget.App"
+    xmlns:vm="using:PlannerWidget.App.ViewModels"
+    Title="Planner Widget – Beállítások">
+
+    <Grid x:Name="RootGrid" RowDefinitions="*,Auto">
+        <Grid.Resources>
+            <Style x:Key="CardStyle" TargetType="Border">
+                <Setter Property="Padding" Value="16,12" />
+                <Setter Property="Margin" Value="0,0,0,4" />
+                <Setter Property="CornerRadius" Value="6" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+                <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
+            </Style>
+            <Style x:Key="DescStyle" TargetType="TextBlock" BasedOn="{StaticResource CaptionTextStyle}">
+                <Setter Property="TextWrapping" Value="Wrap" />
+            </Style>
+        </Grid.Resources>
+
+        <ScrollViewer>
+            <StackPanel MaxWidth="560" Padding="24,12,24,28">
+
+                <!-- Megjelenés -->
+                <TextBlock Text="Megjelenés" Style="{StaticResource SectionHeaderStyle}" />
+                <Border Style="{StaticResource CardStyle}">
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="Téma" />
+                            <TextBlock Text="Sötét, világos, vagy a Windows beállítása szerint." Style="{StaticResource DescStyle}" />
+                        </StackPanel>
+                        <ComboBox Grid.Column="1" MinWidth="170" VerticalAlignment="Center"
+                                  ItemsSource="{x:Bind vm:SettingsViewModel.ThemeOptions}"
+                                  SelectedIndex="{x:Bind ViewModel.ThemeIndex, Mode=TwoWay}" />
+                    </Grid>
+                </Border>
+                <Border Style="{StaticResource CardStyle}">
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="Mindig legfelül" />
+                            <TextBlock Text="A widget a többi ablak fölött marad." Style="{StaticResource DescStyle}" />
+                        </StackPanel>
+                        <ToggleSwitch Grid.Column="1" OnContent="Be" OffContent="Ki" MinWidth="0"
+                                      IsOn="{x:Bind ViewModel.AlwaysOnTop, Mode=TwoWay}" />
+                    </Grid>
+                </Border>
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel Spacing="4">
+                        <ToggleSwitch Header="Elmosott (akril) háttér, amikor a widgetet használod" OnContent="Be" OffContent="Ki (egyszínű)"
+                                      IsOn="{x:Bind ViewModel.BlurWhenActive, Mode=TwoWay}" />
+                        <ToggleSwitch Header="Elmosott marad akkor is, ha máshová kattintasz" OnContent="Be" OffContent="Ki (egyszínű)"
+                                      IsOn="{x:Bind ViewModel.BlurWhenInactive, Mode=TwoWay}" />
+                        <TextBlock Style="{StaticResource DescStyle}"
+                                   Text="Alapból a widget használat közben elmosott, máshová kattintva pedig egyszínűre vált (mint a Windows többi ablaka)." />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource CardStyle}">
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="Lenyitott magasság" />
+                            <TextBlock Text="A lenyitott widget magassága (képpont, 100%-os nagyításnál)." Style="{StaticResource DescStyle}" />
+                        </StackPanel>
+                        <NumberBox x:Name="HeightBox" Grid.Column="1" MinWidth="130" VerticalAlignment="Center"
+                                   AutomationProperties.Name="Lenyitott magasság"
+                                   Minimum="320" Maximum="1400" SmallChange="20" LargeChange="100"
+                                   SpinButtonPlacementMode="Inline"
+                                   Value="{x:Bind ViewModel.ExpandedHeight, Mode=TwoWay}" />
+                    </Grid>
+                </Border>
+                <Border Style="{StaticResource CardStyle}">
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="Szélesség" />
+                            <TextBlock Text="A widget szélessége (képpont, 100%-os nagyításnál). A jobb széle helyben marad." Style="{StaticResource DescStyle}" />
+                        </StackPanel>
+                        <NumberBox x:Name="WidthBox" Grid.Column="1" MinWidth="130" VerticalAlignment="Center"
+                                   AutomationProperties.Name="Szélesség"
+                                   Minimum="{x:Bind vm:SettingsViewModel.MinWindowWidth}"
+                                   Maximum="{x:Bind vm:SettingsViewModel.MaxWindowWidth}"
+                                   SmallChange="20" LargeChange="100"
+                                   SpinButtonPlacementMode="Inline"
+                                   Value="{x:Bind ViewModel.WindowWidth, Mode=TwoWay}" />
+                    </Grid>
+                </Border>
+
+                <!-- Viselkedés -->
+                <TextBlock Text="Viselkedés" Style="{StaticResource SectionHeaderStyle}" />
+                <Border Style="{StaticResource CardStyle}">
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="Indítás a Windows-zal" />
+                            <TextBlock Text="Bejelentkezéskor automatikusan elindul." Style="{StaticResource DescStyle}" />
+                        </StackPanel>
+                        <ToggleSwitch Grid.Column="1" OnContent="Be" OffContent="Ki" MinWidth="0"
+                                      IsOn="{x:Bind ViewModel.StartWithWindows, Mode=TwoWay}" />
+                    </Grid>
+                </Border>
+                <Border Style="{StaticResource CardStyle}">
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="Gyorsbillentyű" />
+                            <TextBlock Text="Bárhonnan előhozza (és újra megnyomva elrejti) a widgetet." Style="{StaticResource DescStyle}" />
+                        </StackPanel>
+                        <ComboBox Grid.Column="1" MinWidth="170" VerticalAlignment="Center"
+                                  ItemsSource="{x:Bind vm:SettingsViewModel.HotkeyOptions}"
+                                  SelectedIndex="{x:Bind ViewModel.HotkeyIndex, Mode=TwoWay}" />
+                    </Grid>
+                </Border>
+                <Border Style="{StaticResource CardStyle}">
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="Frissítés gyakorisága" />
+                            <TextBlock Text="Ennyi percenként tölti le újra a feladatokat." Style="{StaticResource DescStyle}" />
+                        </StackPanel>
+                        <NumberBox x:Name="RefreshBox" Grid.Column="1" MinWidth="130" VerticalAlignment="Center"
+                                   AutomationProperties.Name="Frissítés gyakorisága"
+                                   Minimum="1" Maximum="120" SmallChange="1" LargeChange="5"
+                                   SpinButtonPlacementMode="Inline"
+                                   Value="{x:Bind ViewModel.RefreshIntervalMinutes, Mode=TwoWay}" />
+                    </Grid>
+                </Border>
+                <Border Style="{StaticResource CardStyle}">
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="Az X gomb" />
+                            <TextBlock Text="Mit csináljon a fejléc bezárás gombja." Style="{StaticResource DescStyle}" />
+                        </StackPanel>
+                        <ComboBox Grid.Column="1" MinWidth="170" VerticalAlignment="Center"
+                                  ItemsSource="{x:Bind vm:SettingsViewModel.CloseOptions}"
+                                  SelectedIndex="{x:Bind ViewModel.CloseButtonIndex, Mode=TwoWay}" />
+                    </Grid>
+                </Border>
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel Spacing="4">
+                        <ToggleSwitch Header="Hangok" OnContent="Be" OffContent="Ki" IsOn="{x:Bind ViewModel.SoundsEnabled, Mode=TwoWay}" />
+                        <ToggleSwitch Header="Napi értesítés a mai és lejárt feladatokról" OnContent="Be" OffContent="Ki"
+                                      IsOn="{x:Bind ViewModel.NotificationsEnabled, Mode=TwoWay}" />
+                        <ToggleSwitch Header="Törlés előtt kérdezzen" OnContent="Be" OffContent="Ki"
+                                      IsOn="{x:Bind ViewModel.ConfirmDelete, Mode=TwoWay}" />
+                    </StackPanel>
+                </Border>
+
+                <!-- Fiók -->
+                <TextBlock Text="Fiók" Style="{StaticResource SectionHeaderStyle}" />
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="{x:Bind ViewModel.AccountText, Mode=OneWay}" TextWrapping="Wrap" />
+                        <ToggleSwitch Header="Bejelentkezés a Windows-fiókkal (egyszeri bejelentkezés, haladó)"
+                                      OnContent="Be" OffContent="Ki (böngészőben)"
+                                      IsOn="{x:Bind ViewModel.UseWindowsAccount, Mode=TwoWay}" />
+                        <TextBlock Style="{StaticResource DescStyle}"
+                                   Text="Ehhez az Entra alkalmazásregisztrációban fel kell venni egy plusz átirányítási címet (lásd README.md). Ha az hiányzik, a program magától visszavált a böngészős bejelentkezésre." />
+                        <Button Content="Kijelentkezés" Command="{x:Bind ViewModel.SignOutCommand}" />
+                    </StackPanel>
+                </Border>
+
+                <!-- Beérkező ügyek (SharePoint-ticketek a Planneren keresztül) -->
+                <TextBlock Text="Beérkező ügyek" Style="{StaticResource SectionHeaderStyle}" />
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel Spacing="6">
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="Ügyterv" />
+                                <TextBlock Style="{StaticResource DescStyle}"
+                                           Text="Az a Planner-terv, amelybe a Power Automate a ticketeket teszi. A benne lévő (rád osztott) feladatok „ügyként” jelennek meg." />
+                            </StackPanel>
+                            <ComboBox Grid.Column="1" MinWidth="170" MaxWidth="220" VerticalAlignment="Center"
+                                      AutomationProperties.Name="Ügyterv"
+                                      ItemsSource="{x:Bind ViewModel.TicketPlanOptions}"
+                                      SelectedIndex="{x:Bind ViewModel.TicketPlanIndex, Mode=TwoWay}" />
+                        </Grid>
+                        <TextBlock Text="{x:Bind ViewModel.TicketPlanStatus, Mode=OneWay}" Style="{StaticResource DescStyle}"
+                                   Visibility="{x:Bind local:Ui.VisibleIfText(ViewModel.TicketPlanStatus), Mode=OneWay}" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="Ticket-link sablon" />
+                        <TextBlock Style="{StaticResource DescStyle}"
+                                   Text="A „Ticket megnyitása” ezt a címet nyitja meg a böngészőben; az {id} helyére a ticket azonosítója kerül." />
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                            <TextBox FontFamily="Consolas" FontSize="12" TextWrapping="Wrap"
+                                     AutomationProperties.Name="Ticket-link sablon"
+                                     Text="{x:Bind ViewModel.TicketUrlTemplate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            <Button Grid.Column="1" VerticalAlignment="Top" Content="Alapérték"
+                                    AutomationProperties.Name="Ticket-link sablon alapértékre"
+                                    Command="{x:Bind ViewModel.ResetTicketUrlTemplateCommand}" />
+                        </Grid>
+                        <TextBlock Text="{x:Bind ViewModel.TicketUrlWarning, Mode=OneWay}" Style="{StaticResource DescStyle}"
+                                   Foreground="{x:Bind local:Ui.AmberBrush}"
+                                   Visibility="{x:Bind local:Ui.VisibleIfText(ViewModel.TicketUrlWarning), Mode=OneWay}" />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel Spacing="4">
+                        <ToggleSwitch Header="Értesítés új ügyről" OnContent="Be" OffContent="Ki"
+                                      IsOn="{x:Bind ViewModel.NotifyNewTickets, Mode=TwoWay}" />
+                        <ToggleSwitch Header="Ügy lezárása előtt kérdezzen" OnContent="Be" OffContent="Ki"
+                                      IsOn="{x:Bind ViewModel.ConfirmCloseTicket, Mode=TwoWay}" />
+                        <TextBlock Style="{StaticResource DescStyle}"
+                                   Text="Egy ügy késznek jelölése a ticketet is lezárja (Státusz: Done), és a hozzá tartozó e-maileket archiválja – ez gyakorlatilag nem vonható vissza. A visszanyitás nem jut vissza a SharePointba." />
+                    </StackPanel>
+                </Border>
+
+                <!-- Jelenléti ív -->
+                <TextBlock Text="Jelenléti ív (munkaidő)" Style="{StaticResource SectionHeaderStyle}" />
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel Spacing="10">
+                        <TextBlock Text="PDF" />
+                        <TextBlock Text="{x:Bind ViewModel.PdfPathText, Mode=OneWay}" Style="{StaticResource DescStyle}" IsTextSelectionEnabled="True" />
+                        <TextBlock Text="Mezők" Margin="0,4,0,0" />
+                        <TextBlock Text="{x:Bind ViewModel.TemplatesText, Mode=OneWay}" Style="{StaticResource DescStyle}"
+                                   FontFamily="Consolas" IsTextSelectionEnabled="True" />
+                        <TextBlock Text="{x:Bind ViewModel.WorkStateText, Mode=OneWay}" Style="{StaticResource DescStyle}" />
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button Content="Másik PDF…" Command="{x:Bind ViewModel.ChoosePdfCommand}" />
+                            <Button Content="Mezők újrabeállítása" Command="{x:Bind ViewModel.ReconfigureFieldsCommand}" />
+                            <Button Content="Munkaidő törlése" Command="{x:Bind ViewModel.ResetWorkCommand}" />
+                        </StackPanel>
+                        <TextBlock Style="{StaticResource DescStyle}"
+                                   Text="Hónapváltáskor a program magától megkeresi az új havi ívet ugyanabban a mappaszerkezetben." />
+                    </StackPanel>
+                </Border>
+
+                <!-- Névjegy -->
+                <TextBlock Text="Névjegy" Style="{StaticResource SectionHeaderStyle}" />
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="{x:Bind ViewModel.VersionText}" />
+                        <TextBlock Text="{x:Bind ViewModel.DataFolder}" Style="{StaticResource DescStyle}" IsTextSelectionEnabled="True" />
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button Content="Adatmappa megnyitása" Command="{x:Bind ViewModel.OpenDataFolderCommand}" />
+                            <Button Content="Napló megnyitása" Command="{x:Bind ViewModel.OpenLogCommand}" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource CardStyle}">
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="Régi (Python) verzió beállításai" />
+                            <TextBlock Style="{StaticResource DescStyle}"
+                                       Text="Alapértelmezett oszlopok, jelenléti ív útvonala és mezői, tervnevek átvétele a régi widget mappájából. A meglévő beállításokat nem írja felül." />
+                        </StackPanel>
+                        <Button Grid.Column="1" VerticalAlignment="Center" Content="Importálás…"
+                                Command="{x:Bind ViewModel.ImportLegacyCommand}" />
+                    </Grid>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Mentés: mindent kiír, újraalkalmaz, frissíti a feladatlistát és bezárja az ablakot -->
+        <Border Grid.Row="1" Padding="24,12" BorderThickness="0,1,0,0"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                Background="{ThemeResource LayerFillColorDefaultBrush}">
+            <Grid MaxWidth="512" ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                <TextBlock VerticalAlignment="Center" Style="{StaticResource DescStyle}"
+                           Text="A változások azonnal érvényesek; a Mentés mindent újraalkalmaz és frissíti a feladatokat." />
+                <Button Grid.Column="1" MinWidth="120" Style="{StaticResource AccentButtonStyle}"
+                        Content="Mentés" AutomationProperties.Name="Mentés" Click="OnSaveClick"
+                        Command="{x:Bind ViewModel.SaveAndApplyCommand}" />
+            </Grid>
+        </Border>
+    </Grid>
+</Window>
